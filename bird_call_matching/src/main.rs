@@ -49,6 +49,52 @@ fn main() {
 static CSS: Asset = asset!("/assets/main.css");
 static BIRDS_URL_DIR: &str = "/birds/";
 
+#[server]
+async fn upvote_sound(id: String) -> Result<(), ServerFnError> {
+    use rusqlite::Connection;
+
+    let conn = Connection::open("ratings.db").map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    conn.execute(
+        "INSERT INTO sound_ratings (id, upvotes, downvotes) VALUES (?1, 1, 0)
+         ON CONFLICT(id) DO UPDATE SET upvotes = upvotes + 1",
+        (id,),
+    )
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(())
+}
+
+#[server]
+async fn downvote_sound(id: String) -> Result<(), ServerFnError> {
+    use rusqlite::Connection;
+
+    let conn = Connection::open("ratings.db").map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    conn.execute(
+        "INSERT INTO sound_ratings (id, upvotes, downvotes) VALUES (?1, 0, 1)
+         ON CONFLICT(id) DO UPDATE SET downvotes = downvotes + 1",
+        (id,),
+    )
+    .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    Ok(())
+}
+
+#[server]
+async fn get_ratings(id: String) -> Result<(i64, i64), ServerFnError> {
+    use rusqlite::Connection;
+
+    let conn = Connection::open("ratings.db").map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    conn.query_row(
+        "SELECT upvotes, downvotes FROM sound_ratings WHERE id = ?1",
+        (id,),
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
 fn origin() -> String {
     web_sys::window()
         .and_then(|w| w.location().origin().ok())
@@ -325,6 +371,12 @@ fn Sounds(recordings: Vec<Recording>, mut guessing: Signal<Guessing>) -> Element
 
         }
     }
+}
+
+#[component]
+fn Votes(recording_id: String) -> Element {
+    // TODO fetch votes and display
+    // add upvotes and downvotes buttons
 }
 
 #[component]
