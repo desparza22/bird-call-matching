@@ -385,20 +385,31 @@ fn Sounds(recordings: Vec<Recording>, mut guessing: Signal<Guessing>) -> Element
 }
 
 #[component]
-fn Votes(recording_id: String) -> Element {
-    // TODO fetch votes and display
-    // add upvotes and downvotes buttons
-    let ratings_resource_recording_id = recording_id.clone();
-    let ratings_resource = use_resource(move || {
-        let recording_id = ratings_resource_recording_id.clone();
-        async move { get_ratings(recording_id).await }
+fn DirectionalVote(
+    recording_id: ReadSignal<String>,
+    num_votes: ReadSignal<i64>,
+    is_upvote: bool,
+) -> Element {
+    rsx! {
+    // TODO: factor out directional vote button, so we don't repeat for up and down votes. probably
+    // need some "user_voted: Signal<bool> param so if the user upvotes, the downvote button also
+    // disappears and vice-versa
+    }
+}
+
+#[component]
+fn Votes(recording_id: ReadSignal<String>) -> Element {
+    let ratings_resource = use_resource(move || async move { get_ratings(recording_id()).await });
+    let mut upvoted = use_signal(|| false);
+    let mut downvoted = use_signal(|| false);
+    use_effect(move || {
+        recording_id();
+        upvoted.set(false);
+        downvoted.set(false);
     });
-    let mut upvoted_sig = use_signal(|| None);
-    let upvoted = *upvoted_sig.read() == Some(recording_id.clone());
-    let mut downvoted_sig = use_signal(|| None);
-    let downvoted = *downvoted_sig.read() == Some(recording_id.clone());
+
     let upvote_text = |upvotes: &i64| {
-        if upvoted {
+        if *upvoted.read() {
             format!("👍({upvotes}+1)")
         } else {
             format!("👍({upvotes})")
@@ -406,7 +417,7 @@ fn Votes(recording_id: String) -> Element {
     };
 
     let downvote_text = |downvotes: &i64| {
-        if downvoted {
+        if *downvoted.read() {
             format!("👎({downvotes}+1)")
         } else {
             format!("👎({downvotes})")
@@ -415,49 +426,45 @@ fn Votes(recording_id: String) -> Element {
     rsx! {
         match &*ratings_resource.read() {
             Some(Ok((upvotes, downvotes))) =>  {
-                let upvote_recording_id = recording_id.clone();
-                let downvote_recording_id = recording_id.clone();
                 rsx! {
-                if upvoted || downvoted {  {
-                   rsx! { div {"{upvote_text(upvotes)}"}}
-                }} else {
-                     {
+                if *upvoted.read() || *downvoted.read() {
+                    div {"{upvote_text(upvotes)}"}
+                } else {
 
-                rsx! {button {
+
+                button {
                     onclick: move |_| {
 
-                        let id = upvote_recording_id.clone();
                         spawn(async move {
-                            if upvote_sound(id.clone()).await.is_ok() {
-                                *upvoted_sig.write() = Some(id.clone());
+                            if upvote_sound(recording_id()).await.is_ok() {
+                                upvoted.set(true);
                             }
                         });
                     },
                              "{upvote_text(upvotes)}"
 
+
+                    }}
+
+                if *upvoted.read() || *downvoted.read() {
+                 div {"{downvote_text(downvotes)}"}
+                } else {
+
+
+
+                        button {
+                            onclick: move |_| {
+
+                                spawn(async move {
+                                    if downvote_sound(recording_id()).await.is_ok() {
+                                        downvoted.set(true);
+                                    }
+                                });
+                            },
+                            "{downvote_text(downvotes)}"
+
+                        }
                 }
-                    }}}
-
-                if upvoted || downvoted {  {
-                    rsx! {div {"{downvote_text(downvotes)}"}}
-                }} else {
-                     {
-
-                         rsx! {
-                button {
-                    onclick: move |_| {
-
-                        let id = downvote_recording_id.clone();
-                        spawn(async move {
-                            if downvote_sound(id.clone()).await.is_ok() {
-                                *downvoted_sig.write() = Some(id.clone());
-                            }
-                        });
-                    },
-                             "{downvote_text(downvotes)}"
-
-                }
-                    }}}
                 }},
             Some(Err(_)) => rsx! {
                 div {"Failed to fetch votes"}
