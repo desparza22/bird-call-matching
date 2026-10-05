@@ -48,12 +48,14 @@ fn main() {
 
 static CSS: Asset = asset!("/assets/main.css");
 static BIRDS_URL_DIR: &str = "/birds/";
+static SOUND_RATINGS_DB: &str =
+    "/Users/diegoesparza/CS_Ventures/current_projects/bird-call-matching/sound-ratings.db";
 
 #[server]
 async fn upvote_sound(id: String) -> Result<(), ServerFnError> {
     use rusqlite::Connection;
 
-    let conn = Connection::open("ratings.db").map_err(|e| ServerFnError::new(e.to_string()))?;
+    let conn = Connection::open(SOUND_RATINGS_DB).map_err(|e| ServerFnError::new(e.to_string()))?;
 
     conn.execute(
         "INSERT INTO sound_ratings (id, upvotes, downvotes) VALUES (?1, 1, 0)
@@ -69,7 +71,7 @@ async fn upvote_sound(id: String) -> Result<(), ServerFnError> {
 async fn downvote_sound(id: String) -> Result<(), ServerFnError> {
     use rusqlite::Connection;
 
-    let conn = Connection::open("ratings.db").map_err(|e| ServerFnError::new(e.to_string()))?;
+    let conn = Connection::open(SOUND_RATINGS_DB).map_err(|e| ServerFnError::new(e.to_string()))?;
 
     conn.execute(
         "INSERT INTO sound_ratings (id, upvotes, downvotes) VALUES (?1, 0, 1)
@@ -83,16 +85,21 @@ async fn downvote_sound(id: String) -> Result<(), ServerFnError> {
 
 #[server]
 async fn get_ratings(id: String) -> Result<(i64, i64), ServerFnError> {
-    use rusqlite::Connection;
+    use rusqlite::{Connection, Error as RusqliteError};
 
-    let conn = Connection::open("ratings.db").map_err(|e| ServerFnError::new(e.to_string()))?;
+    let conn = Connection::open(SOUND_RATINGS_DB).map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    conn.query_row(
+    let result = conn.query_row(
         "SELECT upvotes, downvotes FROM sound_ratings WHERE id = ?1",
         (id,),
         |row| Ok((row.get(0)?, row.get(1)?)),
-    )
-    .map_err(|e| ServerFnError::new(e.to_string()))
+    );
+
+    match result {
+        Ok(ratings) => Ok(ratings),
+        Err(RusqliteError::QueryReturnedNoRows) => Ok((0, 0)),
+        Err(e) => Err(ServerFnError::new(e.to_string())),
+    }
 }
 
 fn origin() -> String {
@@ -338,6 +345,10 @@ fn Sounds(recordings: Vec<Recording>, mut guessing: Signal<Guessing>) -> Element
                     onclick: select(audio_box),
                     "guess"
                 }
+                Votes {
+                    key:  "{recordings[corresponding_recording(audio_box)].metadata.id}",
+                    recording_id: "{recordings[corresponding_recording(audio_box)].metadata.id}"
+                }
                 {
                 match guessing.read().sound_guesses[audio_box] {
                     None => rsx! {},
@@ -377,6 +388,85 @@ fn Sounds(recordings: Vec<Recording>, mut guessing: Signal<Guessing>) -> Element
 fn Votes(recording_id: String) -> Element {
     // TODO fetch votes and display
     // add upvotes and downvotes buttons
+    let ratings_resource_recording_id = recording_id.clone();
+    let ratings_resource = use_resource(move || {
+        let recording_id = ratings_resource_recording_id.clone();
+        async move { get_ratings(recording_id).await }
+    });
+    let mut upvoted_sig = use_signal(|| None);
+    let upvoted = *upvoted_sig.read() == Some(recording_id.clone());
+    let mut downvoted_sig = use_signal(|| None);
+    let downvoted = *downvoted_sig.read() == Some(recording_id.clone());
+    let upvote_text = |upvotes: &i64| {
+        if upvoted {
+            format!("👍({upvotes}+1)")
+        } else {
+            format!("👍({upvotes})")
+        }
+    };
+
+    let downvote_text = |downvotes: &i64| {
+        if downvoted {
+            format!("👎({downvotes}+1)")
+        } else {
+            format!("👎({downvotes})")
+        }
+    };
+    rsx! {
+        match &*ratings_resource.read() {
+            Some(Ok((upvotes, downvotes))) =>  {
+                let upvote_recording_id = recording_id.clone();
+                let downvote_recording_id = recording_id.clone();
+                rsx! {
+                if upvoted || downvoted {  {
+                   rsx! { div {"{upvote_text(upvotes)}"}}
+                }} else {
+                     {
+
+                rsx! {button {
+                    onclick: move |_| {
+
+                        let id = upvote_recording_id.clone();
+                        spawn(async move {
+                            if upvote_sound(id.clone()).await.is_ok() {
+                                *upvoted_sig.write() = Some(id.clone());
+                            }
+                        });
+                    },
+                             "{upvote_text(upvotes)}"
+
+                }
+                    }}}
+
+                if upvoted || downvoted {  {
+                    rsx! {div {"{downvote_text(downvotes)}"}}
+                }} else {
+                     {
+
+                         rsx! {
+                button {
+                    onclick: move |_| {
+
+                        let id = downvote_recording_id.clone();
+                        spawn(async move {
+                            if downvote_sound(id.clone()).await.is_ok() {
+                                *downvoted_sig.write() = Some(id.clone());
+                            }
+                        });
+                    },
+                             "{downvote_text(downvotes)}"
+
+                }
+                    }}}
+                }},
+            Some(Err(_)) => rsx! {
+                div {"Failed to fetch votes"}
+            },
+            None => rsx! {
+                div {"Loading votes..."}
+            },
+        }
+    }
 }
 
 #[component]
