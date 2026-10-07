@@ -389,46 +389,32 @@ fn DirectionalVote(
     recording_id: ReadSignal<String>,
     num_votes: ReadSignal<i64>,
     is_upvote: bool,
+    mut user_voted_either_direction: Signal<bool>,
 ) -> Element {
+    let mut user_voted_this_direction = use_signal(|| false);
+    use_effect(move || {
+        recording_id();
+        user_voted_this_direction.set(false);
+    });
+
+    let vote_text = |num_votes: &i64| {
+        let emoji = if is_upvote { "👍" } else { "👎" };
+        let plus_one = if *user_voted_this_direction.read() {
+            "+1"
+        } else {
+            ""
+        };
+        format!("{emoji}({num_votes}{plus_one})")
+    };
+
+    let num_votes = &*num_votes.read();
     rsx! {
     // TODO: factor out directional vote button, so we don't repeat for up and down votes. probably
     // need some "user_voted: Signal<bool> param so if the user upvotes, the downvote button also
     // disappears and vice-versa
-    }
-}
 
-#[component]
-fn Votes(recording_id: ReadSignal<String>) -> Element {
-    let ratings_resource = use_resource(move || async move { get_ratings(recording_id()).await });
-    let mut upvoted = use_signal(|| false);
-    let mut downvoted = use_signal(|| false);
-    use_effect(move || {
-        recording_id();
-        upvoted.set(false);
-        downvoted.set(false);
-    });
-
-    let upvote_text = |upvotes: &i64| {
-        if *upvoted.read() {
-            format!("👍({upvotes}+1)")
-        } else {
-            format!("👍({upvotes})")
-        }
-    };
-
-    let downvote_text = |downvotes: &i64| {
-        if *downvoted.read() {
-            format!("👎({downvotes}+1)")
-        } else {
-            format!("👎({downvotes})")
-        }
-    };
-    rsx! {
-        match &*ratings_resource.read() {
-            Some(Ok((upvotes, downvotes))) =>  {
-                rsx! {
-                if *upvoted.read() || *downvoted.read() {
-                    div {"{upvote_text(upvotes)}"}
+                if *user_voted_either_direction.read() {
+                    div {"{vote_text(num_votes)}"}
                 } else {
 
 
@@ -437,35 +423,40 @@ fn Votes(recording_id: ReadSignal<String>) -> Element {
 
                         spawn(async move {
                             if upvote_sound(recording_id()).await.is_ok() {
-                                upvoted.set(true);
+                                user_voted_this_direction.set(true);
+                                user_voted_either_direction.set(true);
                             }
                         });
                     },
-                             "{upvote_text(upvotes)}"
+                             "{vote_text(num_votes)}"
 
 
                     }}
+    }
+}
 
-                if *upvoted.read() || *downvoted.read() {
-                 div {"{downvote_text(downvotes)}"}
-                } else {
+#[component]
+fn Votes(recording_id: ReadSignal<String>) -> Element {
+    let ratings_resource = use_resource(move || async move { get_ratings(recording_id()).await });
 
+    let mut user_voted_either_direction = use_signal(|| false);
+    use_effect(move || {
+        recording_id();
+        user_voted_either_direction.set(false);
+    });
 
-
-                        button {
-                            onclick: move |_| {
-
-                                spawn(async move {
-                                    if downvote_sound(recording_id()).await.is_ok() {
-                                        downvoted.set(true);
-                                    }
-                                });
-                            },
-                            "{downvote_text(downvotes)}"
-
-                        }
+    rsx! {
+        match &*ratings_resource.read() {
+            Some(Ok((upvotes, downvotes))) =>  {
+                let num_upvotes = use_signal(|| *upvotes);
+                let num_downvotes = use_signal(|| *downvotes);
+                rsx! {
+                DirectionalVote{recording_id, num_votes:num_upvotes, is_upvote:true, user_voted_either_direction}
+                DirectionalVote{recording_id, num_votes:num_downvotes, is_upvote:false, user_voted_either_direction}
                 }
-                }},
+
+
+            },
             Some(Err(_)) => rsx! {
                 div {"Failed to fetch votes"}
             },
