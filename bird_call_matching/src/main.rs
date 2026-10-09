@@ -31,10 +31,20 @@ struct Bird {
 }
 
 struct Guessing {
+    // what sounds are in each sound box
     sound_positions: Vec<usize>,
+
+    // what sounds the user guessed for each sound box
     sound_guesses: Vec<Option<usize>>,
+
+    // what sound box the user has selected, for guessing
     selected_sound: Option<usize>,
+
+    // what sounds the user submitted for each sound box
     submitted: Option<Vec<usize>>,
+
+    // number of rounds where the user guessed [i] sounds correctly
+    correct_guesses_per_round: Vec<u32>,
 }
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");
@@ -202,6 +212,7 @@ fn App() -> Element {
             sound_guesses: vec![None, None, None],
             selected_sound: None,
             submitted: None,
+            correct_guesses_per_round: vec![0, 0, 0, 0],
         }
     });
 
@@ -212,7 +223,8 @@ fn App() -> Element {
                 Title {}
                 Sounds { recordings: birds.iter().map(|bird| bird.recording.clone()).collect(), guessing }
                 Images { image_links: birds.iter().map(|bird| bird.image_links.clone()).collect(), guessing }
-                Redraw { birds_resource, guessing }
+                Redraw { birds_resource, guessing  }
+                Score {guessing}
             },
             Some(Err(e)) => rsx! {
                 div { "Failed to load: {e}" }
@@ -235,6 +247,19 @@ fn Title() -> Element {
 }
 
 #[component]
+fn Score(guessing: Signal<Guessing>) -> Element {
+    rsx! {
+        div {
+            h2 {"Score"}
+            p { "😭🪹 0: {guessing.read().correct_guesses_per_round[0]}" }
+            p { "😕🪺 1: {guessing.read().correct_guesses_per_round[1]}" }
+            p { "🙂🐣 2: {guessing.read().correct_guesses_per_round[2]}" }
+            p { "🤓🐦‍🔥 3: {guessing.read().correct_guesses_per_round[3]}" }
+        }
+    }
+}
+
+#[component]
 fn Redraw(
     mut birds_resource: Resource<Result<Vec<Bird>, reqwest::Error>>,
     mut guessing: Signal<Guessing>,
@@ -242,6 +267,15 @@ fn Redraw(
     let submit = |guesses: Vec<usize>| {
         move |_| {
             guessing.write().submitted = Some(guesses.clone());
+
+            let mut correct_guesses = 0;
+            for (audio_box, guess) in guesses.iter().enumerate() {
+                if *guess == guessing.read().sound_positions[audio_box] {
+                    correct_guesses += 1;
+                }
+            }
+
+            guessing.write().correct_guesses_per_round[correct_guesses] += 1;
             guessing.write().selected_sound = None;
         }
     };
@@ -296,19 +330,26 @@ fn Sounds(recordings: Vec<Recording>, mut guessing: Signal<Guessing>) -> Element
         }
     };
 
-    let play_sound = |id: usize| {
-        move |_| {
-            let element_id = audio_element_id(id);
-            spawn(async move {
-                playing.write()[id] = true;
-                let js = format!(
-                    "const el = document.getElementById('{element_id}');
+    let mut do_select = move |id| guessing.write().selected_sound = Some(id);
+    let do_listen = move |id| {
+        let element_id = audio_element_id(id);
+        spawn(async move {
+            playing.write()[id] = true;
+            let js = format!(
+                "const el = document.getElementById('{element_id}');
                  el.play();
                  await new Promise(resolve => {{ el.onended = resolve; }});"
-                );
-                let _ = document::eval(&js).await;
-                playing.write()[id] = false;
-            });
+            );
+            let _ = document::eval(&js).await;
+            playing.write()[id] = false;
+        });
+    };
+    let select = |id| move |_| do_select(id);
+
+    let listen_and_select = |id: usize| {
+        move |_| {
+            do_select(id);
+            do_listen(id)
         }
     };
 
@@ -326,8 +367,6 @@ fn Sounds(recordings: Vec<Recording>, mut guessing: Signal<Guessing>) -> Element
     };
     let corresponding_recording = |id| guessing.read().sound_positions[id];
 
-    let select = |id| move |_| guessing.write().selected_sound = Some(id);
-
     rsx! {
         div { id: "sounds", style: "display: flex; flex-wrap: wrap; gap: 8px;",
 
@@ -337,13 +376,10 @@ fn Sounds(recordings: Vec<Recording>, mut guessing: Signal<Guessing>) -> Element
             audio { id: "{audio_element_id(audio_box)}", src: "{recordings[corresponding_recording(audio_box)].url}" }
             div {
                 style: "width: {widths}px; height: {heights}px; border: 1px solid {border(audio_box)}; background: {background(audio_box)};",
+                onclick: select(audio_box),
                 button {
-                    onclick: play_sound(audio_box),
+                    onclick: listen_and_select(audio_box),
                     "listen"
-                }
-                button {
-                    onclick: select(audio_box),
-                    "guess"
                 }
                 Votes {
                     key:  "{recordings[corresponding_recording(audio_box)].metadata.id}",
