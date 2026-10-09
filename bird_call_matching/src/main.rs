@@ -3,6 +3,7 @@ use futures::future::join_all;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use serde::Deserialize;
+use tokio::sync::broadcast;
 
 #[derive(Deserialize, Clone, Debug, PartialEq)]
 struct RecordingMetadata {
@@ -30,6 +31,19 @@ struct Bird {
     image_links: ImageLinks,
 }
 
+/*
+ * multiplayer plan:
+ * 1. user can create a room, they type in their name and the room name
+ * 2. user can try to connect to a room. they type in their name and the room name
+ * 3. users request a random seed from the server for their room. on re-draw, server sends the
+ *    room's seed to players waiting to join, as well as the round number
+ * 4. on join, player generates a layout with (room_seed + round_number) as their rng seed. in
+ *    particular, this keeps computation lighter on the server
+ * 5. once a user is ready to guess, they send request to the server, which is fulfilled once every
+ *    user is ready. then correct guesses are displayed
+ * 6. once both users click continue, new round begins (and they receive new round number from the
+ *    server)
+ */
 struct Guessing {
     // what sounds are in each sound box
     sound_positions: Vec<usize>,
@@ -47,17 +61,14 @@ struct Guessing {
     correct_guesses_per_round: Vec<u32>,
 }
 
-const FAVICON: Asset = asset!("/assets/favicon.ico");
-const MAIN_CSS: Asset = asset!("/assets/main.css");
-const HEADER_SVG: Asset = asset!("/assets/header.svg");
-const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
-
 fn main() {
     dioxus::launch(App);
 }
 
 static CSS: Asset = asset!("/assets/main.css");
 static BIRDS_URL_DIR: &str = "/birds/";
+
+#[cfg(feature = "server")]
 static SOUND_RATINGS_DB: &str =
     "/Users/diegoesparza/CS_Ventures/current_projects/bird-call-matching/sound-ratings.db";
 
@@ -110,6 +121,75 @@ async fn get_ratings(id: String) -> Result<(i64, i64), ServerFnError> {
         Err(RusqliteError::QueryReturnedNoRows) => Ok((0, 0)),
         Err(e) => Err(ServerFnError::new(e.to_string())),
     }
+}
+
+#[cfg(feature = "server")]
+static ROOMS: LazyLock<Mutex<GameState>> = LazyLock::new(|| HashMap::new());
+
+#[cfg(feature = "server")]
+struct Player {
+    name: String,
+    correct_guesses_per_round: Vec<u32>,
+}
+
+#[cfg(feature = "server")]
+struct Room {
+    players: Vec<Player>,
+}
+
+#[cfg(feature = "server")]
+#[derive(Serialize, Deserialize, Clone)]
+enum ClientMessage {
+    CreateRoom {
+        room_name: String,
+        player_name: String,
+    },
+    StartGame {
+        room_name: String,
+    },
+}
+
+#[cfg(feature = "server")]
+#[derive(Serialize, Deserialize, Clone)]
+enum ServerMessage {
+    PlayerJoinedPendingRoom { player_name: String },
+}
+
+#[server]
+async fn game_socket(options: WebSocketOptions) -> Result<Websocket<ClientMessage, ServerMessage>> {
+    Ok(options.on_upgrade(|mut socket| async move {
+        while let Some(Ok(msg)) = socket.recv().await {
+            match msg {
+                ClientMove::Guess {
+                    player_id,
+                    sound_box,
+                    bird_guess,
+                } => {
+                    // update shared game state here (e.g. a broadcast channel, or shared Mutex<State>)
+                    // then broadcast to all connected clients:
+                    let _ = socket
+                        .send(ServerUpdate::PlayerGuessed {
+                            player_id,
+                            sound_box,
+                            bird_guess,
+                        })
+                        .await;
+                }
+            }
+        }
+    }))
+}
+
+async fn create_room(room_name: String, username: String) -> Result<(), ServerFnError> {
+    let mut rooms = ROOMS.lock().unwrap();
+    let initial_player = Player {
+        name: usermame,
+        correct_guesses_per_round: vec![0, 0, 0, 0],
+    };
+    let room = Room {
+        players: vec![initial_player],
+    };
+    rooms.insert(room_name, room)
 }
 
 fn origin() -> String {
