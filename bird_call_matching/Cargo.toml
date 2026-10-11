@@ -16,10 +16,12 @@ getrandom = { version = "0.2", features = ["js"] }
 futures = "0.3.34"
 web-sys = "0.3.105"
 rusqlite = { version = "0.31", features = ["bundled"], optional=true }
+tokio = { version = "1", features = ["sync", "macros", "rt"], optional = true }
+axum = { version = "0.8", optional = true }
 
 [features]
 default = ["web"]
 web = ["dioxus/web"]
 desktop = ["dioxus/desktop"]
 mobile = ["dioxus/mobile"]
-server = ["dioxus/server", "dep:rusqlite"]
+server = ["dioxus/server", "dep:rusqlite", "dep:tokio", "dep:axum"]

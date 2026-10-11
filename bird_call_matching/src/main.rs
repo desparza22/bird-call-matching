@@ -1,9 +1,21 @@
+use dioxus::prelude::dioxus_fullstack::{WebSocketOptions, Websocket, WebsocketError};
 use dioxus::prelude::*;
 use futures::future::join_all;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+use std::sync::{LazyLock, Mutex};
+
+#[cfg(feature = "server")]
 use tokio::sync::broadcast;
+
+#[cfg(feature = "server")]
+use tokio::sync::broadcast::error::RecvError;
+
+#[cfg(feature = "server")]
+use dioxus::prelude::dioxus_fullstack::TypedWebsocket;
 
 #[derive(Deserialize, Clone, Debug, PartialEq)]
 struct RecordingMetadata {
@@ -124,9 +136,8 @@ async fn get_ratings(id: String) -> Result<(i64, i64), ServerFnError> {
 }
 
 #[cfg(feature = "server")]
-static ROOMS: LazyLock<Mutex<GameState>> = LazyLock::new(|| HashMap::new());
+static ROOMS: LazyLock<Mutex<HashMap<String, Room>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
-#[cfg(feature = "server")]
 struct Player {
     name: String,
     correct_guesses_per_round: Vec<u32>,
@@ -137,7 +148,6 @@ struct Room {
     players: Vec<Player>,
 }
 
-#[cfg(feature = "server")]
 #[derive(Serialize, Deserialize, Clone)]
 enum ClientMessage {
     CreateRoom {
@@ -149,41 +159,99 @@ enum ClientMessage {
     },
 }
 
-#[cfg(feature = "server")]
 #[derive(Serialize, Deserialize, Clone)]
 enum ServerMessage {
-    PlayerJoinedPendingRoom { player_name: String },
+    Ack { msg: String },
+}
+
+#[derive(Clone)]
+enum ServerUpdate {
+    Ack { msg: String },
+}
+
+#[cfg(feature = "server")]
+static UPDATES: std::sync::LazyLock<broadcast::Sender<ServerUpdate>> =
+    std::sync::LazyLock::new(|| broadcast::channel(100).0);
+
+#[cfg(feature = "server")]
+fn handle_client_message(
+    client_msg: Result<ClientMessage, WebsocketError>,
+    _socket: &mut TypedWebsocket<ClientMessage, ServerMessage>,
+) -> Result<(), String> {
+    match client_msg {
+        Ok(ClientMessage::CreateRoom {
+            room_name,
+            player_name,
+        }) => {
+            let _ = ROOMS.lock().unwrap().insert(
+                room_name,
+                Room {
+                    players: vec![Player {
+                        name: player_name,
+                        correct_guesses_per_round: vec![0, 0, 0, 0],
+                    }],
+                },
+            );
+            Ok(())
+        }
+
+        Ok(ClientMessage::StartGame { room_name }) => match UPDATES.send(ServerUpdate::Ack {
+            msg: format!("{room_name} "),
+        }) {
+            Ok(_) => Ok(()),
+            Err(send_error) => Err(format!("{send_error}")),
+        },
+        Err(websocket_error) => Err(format!("{websocket_error}")),
+    }
+}
+
+#[cfg(feature = "server")]
+async fn handle_server_update(
+    server_update: Result<ServerUpdate, RecvError>,
+    socket: &mut TypedWebsocket<ClientMessage, ServerMessage>,
+) {
+    match server_update {
+        Ok(ServerUpdate::Ack { msg }) => {
+            let _ = socket
+                .send(ServerMessage::Ack {
+                    msg: format!("{msg} "),
+                })
+                .await;
+        }
+        Err(_) => (),
+    }
 }
 
 #[server]
 async fn game_socket(options: WebSocketOptions) -> Result<Websocket<ClientMessage, ServerMessage>> {
-    Ok(options.on_upgrade(|mut socket| async move {
-        while let Some(Ok(msg)) = socket.recv().await {
-            match msg {
-                ClientMove::Guess {
-                    player_id,
-                    sound_box,
-                    bird_guess,
-                } => {
-                    // update shared game state here (e.g. a broadcast channel, or shared Mutex<State>)
-                    // then broadcast to all connected clients:
-                    let _ = socket
-                        .send(ServerUpdate::PlayerGuessed {
-                            player_id,
-                            sound_box,
-                            bird_guess,
-                        })
-                        .await;
+    Ok(options.on_upgrade(
+        |mut socket: TypedWebsocket<ClientMessage, ServerMessage>| async move {
+            let mut updates = UPDATES.subscribe();
+
+            loop {
+                tokio::select! {
+                    client_msg = socket.recv() => {
+                        match
+                        handle_client_message(client_msg, &mut socket) {
+                            Ok(()) => (),
+                            Err(_) => break
+                        }
+                    },
+
+                    server_update = updates.recv() => {
+                        handle_server_update(server_update, &mut socket).await
+                    }
                 }
             }
-        }
-    }))
+        },
+    ))
 }
 
+/*
 async fn create_room(room_name: String, username: String) -> Result<(), ServerFnError> {
     let mut rooms = ROOMS.lock().unwrap();
     let initial_player = Player {
-        name: usermame,
+        name: username,
         correct_guesses_per_round: vec![0, 0, 0, 0],
     };
     let room = Room {
@@ -191,6 +259,7 @@ async fn create_room(room_name: String, username: String) -> Result<(), ServerFn
     };
     rooms.insert(room_name, room)
 }
+*/
 
 fn origin() -> String {
     web_sys::window()
@@ -331,10 +400,10 @@ fn Score(guessing: Signal<Guessing>) -> Element {
     rsx! {
         div {
             h2 {"Score"}
-            p { "😭🪹 0: {guessing.read().correct_guesses_per_round[0]}" }
-            p { "😕🪺 1: {guessing.read().correct_guesses_per_round[1]}" }
-            p { "🙂🐣 2: {guessing.read().correct_guesses_per_round[2]}" }
-            p { "🤓🐦‍🔥 3: {guessing.read().correct_guesses_per_round[3]}" }
+            h3 { "🪹 0: {guessing.read().correct_guesses_per_round[0]}" }
+            h3 { "🪺 1: {guessing.read().correct_guesses_per_round[1]}" }
+            h3 { "🐣 2: {guessing.read().correct_guesses_per_round[2]}" }
+            h3 { "🐦‍🔥 3: {guessing.read().correct_guesses_per_round[3]}" }
         }
     }
 }

@@ -2,7 +2,7 @@ import json
 import os
 from pathlib import Path
 
-public_assets_root = "/Users/diegoesparza/CS_Ventures/current_projects/bird-call-matching/bird_call_matching/public"
+public_assets_root = "/users/diegoesparza/cs_ventures/current_projects/bird-call-matching/bird_call_matching/public"
 sounds_root = public_assets_root + "/sounds"
 birds_root = public_assets_root + "/birds"
 
