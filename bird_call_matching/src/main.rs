@@ -367,21 +367,27 @@ fn App() -> Element {
 
     rsx! {
         document::Stylesheet { href: CSS }
-        match &*birds_resource.read() {
-            Some(Ok(birds)) => rsx! {
-                Title {}
-                Sounds { recordings: birds.iter().map(|bird| bird.recording.clone()).collect(), guessing }
-                Images { image_links: birds.iter().map(|bird| bird.image_links.clone()).collect(), guessing }
-                Redraw { birds_resource, guessing  }
-                Score {guessing}
-            },
-            Some(Err(e)) => rsx! {
-                div { "Failed to load: {e}" }
-                button { onclick: move |_| birds_resource.restart(), "retry" }
-            },
-            None => rsx! {
-                div { "Loading..." }
-            },
+        main { class: "app",
+            Title {}
+            match &*birds_resource.read() {
+                Some(Ok(birds)) => rsx! {
+                    Sounds { recordings: birds.iter().map(|bird| bird.recording.clone()).collect(), guessing }
+                    Images { image_links: birds.iter().map(|bird| bird.image_links.clone()).collect(), guessing }
+                    Redraw { birds_resource, guessing }
+                    Score { guessing }
+                },
+                Some(Err(e)) => rsx! {
+                    div { class: "status error", "Couldn't load birds: {e}" }
+                    button {
+                        class: "btn primary",
+                        onclick: move |_| birds_resource.restart(),
+                        "Try again"
+                    }
+                },
+                None => rsx! {
+                    div { class: "status", "Loading birds…" }
+                },
+            }
         }
     }
 }
@@ -389,21 +395,30 @@ fn App() -> Element {
 #[component]
 fn Title() -> Element {
     rsx! {
-        div { id: "title",
+        header { class: "masthead",
             h1 { "Go Birdy" }
+            p { class: "lede", "Match each call to the bird that made it." }
         }
     }
 }
 
 #[component]
 fn Score(guessing: Signal<Guessing>) -> Element {
+    const TIERS: [&str; 4] = ["🪹", "🪺", "🐣", "🐦‍🔥"];
     rsx! {
-        div {
-            h2 {"Score"}
-            h3 { "🪹 0: {guessing.read().correct_guesses_per_round[0]}" }
-            h3 { "🪺 1: {guessing.read().correct_guesses_per_round[1]}" }
-            h3 { "🐣 2: {guessing.read().correct_guesses_per_round[2]}" }
-            h3 { "🐦‍🔥 3: {guessing.read().correct_guesses_per_round[3]}" }
+        section {
+            h2 { class: "panel-title", "Score" }
+            div { class: "score-grid",
+                for (correct, emoji) in TIERS.iter().enumerate() {
+                    div { key: "{correct}", class: "score-tile",
+                        span { class: "score-emoji", "{emoji}" }
+                        span { class: "score-count",
+                            "{guessing.read().correct_guesses_per_round[correct]}"
+                        }
+                        span { class: "score-label", "{correct} correct" }
+                    }
+                }
+            }
         }
     }
 }
@@ -436,29 +451,28 @@ fn Redraw(
     };
 
     rsx! {
-    {
-        match &guessing.read().submitted {
-            None => {
-                let guesses : Vec<usize> = guessing.read().sound_guesses.iter().filter_map(|guess| *guess).collect();
-                if guesses.len() == 3 {
-                    rsx! {
-                        button {
-                            onclick: submit(guesses),
-                            "submit"
+        div { class: "actions",
+            match &guessing.read().submitted {
+                None => {
+                    let guesses: Vec<usize> = guessing
+                        .read()
+                        .sound_guesses
+                        .iter()
+                        .filter_map(|guess| *guess)
+                        .collect();
+                    if guesses.len() == 3 {
+                        rsx! {
+                            button { class: "btn primary", onclick: submit(guesses), "Submit guesses" }
+                        }
+                    } else {
+                        rsx! {
+                            div { class: "hint", "Click a call, then click the bird you think made it." }
                         }
                     }
-                } else {
-                    rsx! {}
                 }
-
-
-            }
-            Some(_) => {
-                rsx! {
-                    button {
-                        onclick: redraw,  "re-draw" }
-                    }
-                }
+                Some(_) => rsx! {
+                    button { class: "btn primary", onclick: redraw, "New round" }
+                },
             }
         }
     }
@@ -466,18 +480,8 @@ fn Redraw(
 
 #[component]
 fn Sounds(recordings: Vec<Recording>, mut guessing: Signal<Guessing>) -> Element {
-    let widths = 200 - 2;
-    let heights = 150 - 2;
-
     let mut playing = use_signal(|| vec![false, false, false]);
     let audio_element_id = |id: usize| format!("sound{}-id", id);
-    let border = |id: usize| {
-        if playing.read()[id] {
-            "red"
-        } else {
-            "white"
-        }
-    };
 
     let mut do_select = move |id| guessing.write().selected_sound = Some(id);
     let do_listen = move |id| {
@@ -494,7 +498,6 @@ fn Sounds(recordings: Vec<Recording>, mut guessing: Signal<Guessing>) -> Element
         });
     };
     let select = |id| move |_| do_select(id);
-
     let listen_and_select = |id: usize| {
         move |_| {
             do_select(id);
@@ -502,69 +505,61 @@ fn Sounds(recordings: Vec<Recording>, mut guessing: Signal<Guessing>) -> Element
         }
     };
 
-    let background = |id: usize| {
-        let selected = guessing
-            .read()
-            .selected_sound
-            .map(|selected| selected == id)
-            .unwrap_or(false);
-        if selected {
-            "cyan"
+    let card_class = |id: usize| {
+        let playing_class = if playing.read()[id] { " playing" } else { "" };
+        let selected_class = if guessing.read().selected_sound == Some(id) {
+            " selected"
         } else {
-            "gray"
-        }
+            ""
+        };
+        format!("sound-card{playing_class}{selected_class}")
     };
     let corresponding_recording = |id| guessing.read().sound_positions[id];
+    let recording_for = |id: usize| &recordings[corresponding_recording(id)];
 
     rsx! {
-        div { id: "sounds", style: "display: flex; flex-wrap: wrap; gap: 8px;",
-
-            for audio_box in (0..3) {
-                div {
-            key: "{audio_box}",
-            audio { id: "{audio_element_id(audio_box)}", src: "{recordings[corresponding_recording(audio_box)].url}" }
-            div {
-                style: "width: {widths}px; height: {heights}px; border: 1px solid {border(audio_box)}; background: {background(audio_box)};",
-                onclick: select(audio_box),
-                button {
-                    onclick: listen_and_select(audio_box),
-                    "listen"
-                }
-                Votes {
-                    key:  "{recordings[corresponding_recording(audio_box)].metadata.id}",
-                    recording_id: "{recordings[corresponding_recording(audio_box)].metadata.id}"
-                }
-                {
-                match guessing.read().sound_guesses[audio_box] {
-                    None => rsx! {},
-                    Some(guess) => rsx! {
-                        div { "{recordings[guess].metadata.en}" }
+        section {
+            h2 { class: "panel-title", "Calls" }
+            div { id: "sounds", class: "card-row",
+                for audio_box in 0..3 {
+                    div {
+                        key: "{audio_box}",
+                        class: "{card_class(audio_box)}",
+                        onclick: select(audio_box),
+                        audio { id: "{audio_element_id(audio_box)}", src: "{recording_for(audio_box).url}" }
+                        div { class: "sound-label", "Call {audio_box + 1}" }
+                        div { class: "wave",
+                            for bar in 0..7 {
+                                span { key: "{bar}" }
+                            }
+                        }
+                        button {
+                            class: "btn listen",
+                            onclick: listen_and_select(audio_box),
+                            "▶ Listen"
+                        }
+                        Votes { recording_id: recording_for(audio_box).metadata.id.clone() }
+                        match guessing.read().sound_guesses[audio_box] {
+                            None => rsx! {},
+                            Some(guess) => rsx! {
+                                div { class: "guess", "You guessed {recordings[guess].metadata.en}" }
+                            },
+                        }
+                        match &guessing.read().submitted {
+                            None => rsx! {},
+                            Some(submitted) => {
+                                let correct = submitted[audio_box] == guessing.read().sound_positions[audio_box];
+                                let name = &recording_for(audio_box).metadata.en;
+                                if correct {
+                                    rsx! { div { class: "result correct", "✓ {name}" } }
+                                } else {
+                                    rsx! { div { class: "result incorrect", "✗ It was {name}" } }
+                                }
+                            }
+                        }
                     }
-                }
-
-                    }
-                {
-                match &guessing.read().submitted {
-                    None => rsx! {},
-                    Some(submitted_value) => {
-                        let color =
-                        if submitted_value[audio_box] == guessing.read().sound_positions[audio_box] {
-                            "green"
-                        } else {
-                             "red"
-                        };
-
-
-                        rsx! {
-                            div {color:"{color}", "{recordings[corresponding_recording(audio_box)].metadata.en}"}
-                    }
-                    }
-                }
                 }
             }
-                }
-            }
-
         }
     }
 }
@@ -654,38 +649,31 @@ fn Votes(recording_id: ReadSignal<String>) -> Element {
 
 #[component]
 fn Images(image_links: Vec<ImageLinks>, mut guessing: Signal<Guessing>) -> Element {
-    let border_size = 2;
-    let widths = 200 - 2 * border_size;
-    let heights = 150 - 2 * border_size;
-
     let guess = |image_id| {
         move |_| {
             let mut guessing_value = guessing.write();
-
-            match guessing_value.selected_sound {
-                None => {}
-                Some(sound_id) => {
-                    guessing_value.sound_guesses[sound_id] = Some(image_id);
-                    guessing_value.selected_sound = None;
-                }
+            if let Some(sound_id) = guessing_value.selected_sound {
+                guessing_value.sound_guesses[sound_id] = Some(image_id);
+                guessing_value.selected_sound = None;
             }
         }
     };
+    let pictures_class = if guessing.read().selected_sound.is_some() {
+        "pictures armed"
+    } else {
+        "pictures"
+    };
 
     rsx! {
-        div {
-            id: "pictures",
-            style: "display: flex; flex-wrap: wrap; gap: 3px;",
-            for bird_image in (0..5) {
-
-            div {
-                key: "{bird_image}",
-                style: "width: {widths}px; height: {heights}px; border: {border_size}px solid cyan;",
-                onclick: guess(bird_image),
-                img { src:"{image_links[bird_image].medium_url}",
-                style: "width: 80%; height: 80%; object-fit: cover; display: block;"
-                },
-                "{image_links[bird_image].en}" }
+        section {
+            h2 { class: "panel-title", "Birds" }
+            div { id: "pictures", class: "{pictures_class}",
+                for bird_image in 0..5 {
+                    div { key: "{bird_image}", class: "photo", onclick: guess(bird_image),
+                        img { src: "{image_links[bird_image].medium_url}", alt: "" }
+                        div { class: "name", "{image_links[bird_image].en}" }
+                    }
+                }
             }
         }
     }
