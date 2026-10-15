@@ -1,4 +1,6 @@
-use dioxus::prelude::dioxus_fullstack::{WebSocketOptions, Websocket, WebsocketError};
+use dioxus::prelude::dioxus_fullstack::{
+    use_websocket, WebSocketOptions, Websocket, WebsocketError,
+};
 use dioxus::prelude::*;
 use futures::future::join_all;
 use rand::seq::SliceRandom;
@@ -138,17 +140,18 @@ async fn get_ratings(id: String) -> Result<(i64, i64), ServerFnError> {
 #[cfg(feature = "server")]
 static ROOMS: LazyLock<Mutex<HashMap<String, Room>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 struct Player {
     name: String,
     correct_guesses_per_round: Vec<u32>,
 }
 
-#[cfg(feature = "server")]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 struct Room {
     players: Vec<Player>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 enum ClientMessage {
     CreateRoom {
         room_name: String,
@@ -159,18 +162,20 @@ enum ClientMessage {
     },
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 enum ServerMessage {
-    Ack { msg: String },
+    RoomCreated { room: Room },
+    GameStarted { room_name: String },
 }
 
 #[derive(Clone)]
-enum ServerUpdate {
-    Ack { msg: String },
+enum Broadcast {
+    RoomCreated { room: Room },
+    GameStarted { room_name: String },
 }
 
 #[cfg(feature = "server")]
-static UPDATES: std::sync::LazyLock<broadcast::Sender<ServerUpdate>> =
+static UPDATES: std::sync::LazyLock<broadcast::Sender<Broadcast>> =
     std::sync::LazyLock::new(|| broadcast::channel(100).0);
 
 #[cfg(feature = "server")]
@@ -183,46 +188,48 @@ fn handle_client_message(
             room_name,
             player_name,
         }) => {
-            let _ = ROOMS.lock().unwrap().insert(
-                room_name,
-                Room {
-                    players: vec![Player {
-                        name: player_name,
-                        correct_guesses_per_round: vec![0, 0, 0, 0],
-                    }],
-                },
-            );
-            Ok(())
+            let room = Room {
+                players: vec![Player {
+                    name: player_name,
+                    correct_guesses_per_round: vec![0, 0, 0, 0],
+                }],
+            };
+            let _ = ROOMS.lock().unwrap().insert(room_name, room.clone());
+            match UPDATES.send(Broadcast::RoomCreated { room }) {
+                Ok(_) => Ok(()),
+                Err(send_error) => Err(format!("{send_error}")),
+            }
         }
 
-        Ok(ClientMessage::StartGame { room_name }) => match UPDATES.send(ServerUpdate::Ack {
-            msg: format!("{room_name} "),
-        }) {
-            Ok(_) => Ok(()),
-            Err(send_error) => Err(format!("{send_error}")),
-        },
+        Ok(ClientMessage::StartGame { room_name }) => {
+            match UPDATES.send(Broadcast::GameStarted { room_name }) {
+                Ok(_) => Ok(()),
+                Err(send_error) => Err(format!("{send_error}")),
+            }
+        }
         Err(websocket_error) => Err(format!("{websocket_error}")),
     }
 }
 
 #[cfg(feature = "server")]
-async fn handle_server_update(
-    server_update: Result<ServerUpdate, RecvError>,
+async fn handle_broadcast(
+    broadcast: Result<Broadcast, RecvError>,
     socket: &mut TypedWebsocket<ClientMessage, ServerMessage>,
 ) {
-    match server_update {
-        Ok(ServerUpdate::Ack { msg }) => {
+    match broadcast {
+        Ok(Broadcast::RoomCreated { room }) => {
             let _ = socket
-                .send(ServerMessage::Ack {
-                    msg: format!("{msg} "),
-                })
+                .send(ServerMessage::RoomCreated { room: room.clone() })
                 .await;
+        }
+        Ok(Broadcast::GameStarted { room_name }) => {
+            let _ = socket.send(ServerMessage::GameStarted { room_name }).await;
         }
         Err(_) => (),
     }
 }
 
-#[server]
+#[get("/api/game_ws")]
 async fn game_socket(options: WebSocketOptions) -> Result<Websocket<ClientMessage, ServerMessage>> {
     Ok(options.on_upgrade(
         |mut socket: TypedWebsocket<ClientMessage, ServerMessage>| async move {
@@ -238,28 +245,14 @@ async fn game_socket(options: WebSocketOptions) -> Result<Websocket<ClientMessag
                         }
                     },
 
-                    server_update = updates.recv() => {
-                        handle_server_update(server_update, &mut socket).await
+                    broadcast = updates.recv() => {
+                        handle_broadcast(broadcast, &mut socket).await
                     }
                 }
             }
         },
     ))
 }
-
-/*
-async fn create_room(room_name: String, username: String) -> Result<(), ServerFnError> {
-    let mut rooms = ROOMS.lock().unwrap();
-    let initial_player = Player {
-        name: username,
-        correct_guesses_per_round: vec![0, 0, 0, 0],
-    };
-    let room = Room {
-        players: vec![initial_player],
-    };
-    rooms.insert(room_name, room)
-}
-*/
 
 fn origin() -> String {
     web_sys::window()
@@ -371,6 +364,7 @@ fn App() -> Element {
             Title {}
             match &*birds_resource.read() {
                 Some(Ok(birds)) => rsx! {
+                    Multiplayer {}
                     Sounds { recordings: birds.iter().map(|bird| bird.recording.clone()).collect(), guessing }
                     Images { image_links: birds.iter().map(|bird| bird.image_links.clone()).collect(), guessing }
                     Redraw { birds_resource, guessing }
@@ -399,6 +393,58 @@ fn Title() -> Element {
             h1 { "Go Birdy" }
             p { class: "lede", "Match each call to the bird that made it." }
         }
+    }
+}
+
+#[component]
+fn Multiplayer() -> Element {
+    let mut form_text = use_signal(String::new);
+
+    let mut socket = use_websocket(|| game_socket(WebSocketOptions::new()));
+    let mut rooms = use_signal(Vec::<Room>::new);
+
+    use_future(move || async move {
+        while let Ok(ServerMessage::RoomCreated { room }) = socket.recv().await {
+            rooms.write().push(room)
+        }
+    });
+    let create_room = async move |room_name: String| {
+        let _ = socket
+            .send(ClientMessage::CreateRoom {
+                room_name: room_name.clone(),
+                player_name: String::from("foo"),
+            })
+            .await;
+    };
+
+    rsx! {
+        form {
+            onsubmit: move |evt| {
+                evt.prevent_default();
+                form_text.set(String::new());
+
+                async move {
+                create_room(form_text()).await
+                }
+            },
+            input {
+                r#type: "text",
+                placeholder: "Type here",
+                value: "{form_text}",
+                oninput: move |evt| form_text.set(evt.value()),
+            }
+            button { r#type: "submit", "Submit" }
+        }
+        div {
+            for (idx, room) in rooms().iter().enumerate() {
+                div {
+                key: "{idx}",
+                p { "{room.players[0].name}" }
+                }
+
+            }
+        }
+
     }
 }
 
