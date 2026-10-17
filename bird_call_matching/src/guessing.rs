@@ -55,7 +55,7 @@ impl Guessing {
     }
 
     pub fn reset_for_new_round(&mut self) {
-        self.sound_guesses = vec![None, None, None, None, None];
+        self.sound_guesses = vec![None, None, None];
         self.submitted = None;
     }
 }

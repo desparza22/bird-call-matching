@@ -12,11 +12,14 @@ pub fn Votes(recording_id: ReadSignal<String>) -> Element {
         user_voted_either_direction.set(false);
     });
 
+    let mut num_upvotes = use_signal(|| 0);
+    let mut num_downvotes = use_signal(|| 0);
+
     rsx! {
         match &*ratings_resource.read() {
             Some(Ok((upvotes, downvotes))) => {
-                let num_upvotes = use_signal(|| *upvotes);
-                let num_downvotes = use_signal(|| *downvotes);
+                num_upvotes.set(*upvotes);
+                num_downvotes.set(*downvotes);
                 rsx! {
                     DirectionalVote {
                         recording_id,
