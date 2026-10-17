@@ -1,9 +1,9 @@
 use dioxus::prelude::*;
 
-use crate::guessing::Guessing;
+use crate::board_state::BoardState;
 
 #[component]
-pub fn Score(guessing: Signal<Guessing>) -> Element {
+pub fn Score(board_state: Signal<BoardState>) -> Element {
     const TIERS: [&str; 4] = ["🪹", "🪺", "🐣", "🐦‍🔥"];
     rsx! {
         section {
@@ -13,7 +13,7 @@ pub fn Score(guessing: Signal<Guessing>) -> Element {
                     div { key: "{correct}", class: "score-tile",
                         span { class: "score-emoji", "{emoji}" }
                         span { class: "score-count",
-                            "{guessing.read().correct_guesses_per_round[correct]}"
+                            "{board_state.read().correct_guesses_per_round[correct]}"
                         }
                         span { class: "score-label", "{correct} correct" }
                     }

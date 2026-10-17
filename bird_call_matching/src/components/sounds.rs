@@ -1,15 +1,14 @@
 use dioxus::prelude::*;
 
 use super::Votes;
-use crate::birds::Recording;
-use crate::guessing::Guessing;
+use crate::board_state::BoardState;
 
 #[component]
-pub fn Sounds(recordings: Vec<Recording>, mut guessing: Signal<Guessing>) -> Element {
+pub fn Sounds(mut board_state: Signal<BoardState>) -> Element {
     let mut playing = use_signal(|| vec![false, false, false]);
     let audio_element_id = |id: usize| format!("sound{id}-id");
 
-    let mut do_select = move |id| guessing.write().selected_sound = Some(id);
+    let mut do_select = move |id| board_state.write().selected_sound = Some(id);
     let do_listen = move |id| {
         let element_id = audio_element_id(id);
         spawn(async move {
@@ -31,17 +30,16 @@ pub fn Sounds(recordings: Vec<Recording>, mut guessing: Signal<Guessing>) -> Ele
         }
     };
 
+    let board = board_state.read();
     let card_class = |id: usize| {
         let playing_class = if playing.read()[id] { " playing" } else { "" };
-        let selected_class = if guessing.read().selected_sound == Some(id) {
+        let selected_class = if board.selected_sound == Some(id) {
             " selected"
         } else {
             ""
         };
         format!("sound-card{playing_class}{selected_class}")
     };
-    let corresponding_recording = |id| guessing.read().sound_positions[id];
-    let recording_for = |id: usize| &recordings[corresponding_recording(id)];
 
     rsx! {
         section {
@@ -54,7 +52,7 @@ pub fn Sounds(recordings: Vec<Recording>, mut guessing: Signal<Guessing>) -> Ele
                         onclick: select(audio_box),
                         audio {
                             id: "{audio_element_id(audio_box)}",
-                            src: "{recording_for(audio_box).url}",
+                            src: "{board.recording_for_box(audio_box).url}",
                         }
                         div { class: "sound-label", "Call {audio_box + 1}" }
                         div { class: "wave",
@@ -67,19 +65,18 @@ pub fn Sounds(recordings: Vec<Recording>, mut guessing: Signal<Guessing>) -> Ele
                             onclick: listen_and_select(audio_box),
                             "▶ Listen"
                         }
-                        Votes { recording_id: recording_for(audio_box).metadata.id.clone() }
-                        match guessing.read().sound_guesses[audio_box] {
+                        Votes { recording_id: board.recording_for_box(audio_box).metadata.id.clone() }
+                        match board.sound_guesses[audio_box] {
                             None => rsx! {},
                             Some(guess) => rsx! {
-                                div { class: "guess", "You guessed {recordings[guess].metadata.en}" }
+                                div { class: "guess", "You guessed {board.recordings[guess].metadata.en}" }
                             },
                         }
-                        match &guessing.read().submitted {
+                        match &board.submitted {
                             None => rsx! {},
                             Some(submitted) => {
-                                let correct = submitted[audio_box]
-                                    == guessing.read().sound_positions[audio_box];
-                                let name = &recording_for(audio_box).metadata.en;
+                                let correct = submitted[audio_box] == board.sound_positions[audio_box];
+                                let name = &board.recording_for_box(audio_box).metadata.en;
                                 if correct {
                                     rsx! {
                                         div { class: "result correct", "✓ {name}" }

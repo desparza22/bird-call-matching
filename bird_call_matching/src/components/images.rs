@@ -1,12 +1,13 @@
 use dioxus::prelude::*;
 
-use crate::birds::ImageLinks;
-use crate::guessing::Guessing;
+use crate::board_state::BoardState;
 
 #[component]
-pub fn Images(image_links: Vec<ImageLinks>, mut guessing: Signal<Guessing>) -> Element {
-    let guess = |image_id| move |_| guessing.write().guess_selected(image_id);
-    let pictures_class = if guessing.read().selected_sound.is_some() {
+pub fn Images(mut board_state: Signal<BoardState>) -> Element {
+    let guess = |image_id| move |_| board_state.write().guess_selected(image_id);
+
+    let board = board_state.read();
+    let pictures_class = if board.selected_sound.is_some() {
         "pictures armed"
     } else {
         "pictures"
@@ -16,16 +17,13 @@ pub fn Images(image_links: Vec<ImageLinks>, mut guessing: Signal<Guessing>) -> E
         section {
             h2 { class: "panel-title", "Birds" }
             div { id: "pictures", class: "{pictures_class}",
-                for bird_image in 0..5 {
+                for (bird_image, links) in board.image_links.iter().enumerate() {
                     div {
                         key: "{bird_image}",
                         class: "photo",
                         onclick: guess(bird_image),
-                        img {
-                            src: "{image_links[bird_image].medium_url}",
-                            alt: "",
-                        }
-                        div { class: "name", "{image_links[bird_image].en}" }
+                        img { src: "{links.medium_url}", alt: "" }
+                        div { class: "name", "{links.en}" }
                     }
                 }
             }

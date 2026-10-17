@@ -1,25 +1,24 @@
 use dioxus::prelude::*;
 
-use crate::birds::Bird;
-use crate::guessing::Guessing;
+use crate::board_state::BoardState;
 
 #[component]
 pub fn Redraw(
-    mut birds_resource: Resource<Result<Vec<Bird>, reqwest::Error>>,
-    mut guessing: Signal<Guessing>,
+    mut birds_resource: Resource<Result<(), reqwest::Error>>,
+    mut board_state: Signal<BoardState>,
 ) -> Element {
-    let submit = |guesses: Vec<usize>| move |_| guessing.write().submit(guesses.clone());
+    let submit = |guesses: Vec<usize>| move |_| board_state.write().submit(guesses.clone());
 
     let redraw = move |_| {
         birds_resource.restart();
-        guessing.write().reset_for_new_round();
+        board_state.write().reset_for_new_round();
     };
 
     rsx! {
         div { class: "actions",
-            match &guessing.read().submitted {
+            match &board_state.read().submitted {
                 None => {
-                    let guesses: Vec<usize> = guessing
+                    let guesses: Vec<usize> = board_state
                         .read()
                         .sound_guesses
                         .iter()
