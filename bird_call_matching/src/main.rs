@@ -1,4 +1,4 @@
-use dioxus::logger::tracing::{debug, error, info, warn};
+use dioxus::logger::tracing::error;
 use dioxus::prelude::dioxus_fullstack::{
     use_websocket, WebSocketOptions, Websocket, WebsocketError,
 };
@@ -200,19 +200,35 @@ impl Rooms {
         }
     }
 
+    fn bind_room<A>(
+        &mut self,
+        room_number: usize,
+        f: impl FnOnce(&mut RoomServerState) -> Result<A, String>,
+    ) -> Result<A, String> {
+        match self.map_room(room_number, f) {
+            Err(err) => Err(err),
+            Ok(Err(err)) => Err(err),
+            Ok(Ok(res)) => Ok(res),
+        }
+    }
+
     // Returns Ok(String) with the actual name for the player, possibly modified to avoid
-    // collisions
-    fn player_join(&mut self, room_number: usize, player_name: String) -> Result<String, String> {
-        let player_name = self.map_room(room_number, |room_handle| {
-            let mut unique_player_name = player_name;
-            let mut unique_suffix = 0;
+    // collisions, and the list of all players
+    fn player_join(
+        &mut self,
+        room_number: usize,
+        player_name: String,
+    ) -> Result<(String, Vec<String>), String> {
+        let (player_name, current_players) = self.map_room(room_number, |room_handle| {
+            let mut unique_player_name = player_name.clone();
+            let mut unique_suffix = 1;
             while room_handle
                 .room_shared_state
                 .players
                 .contains_key(&unique_player_name)
             {
                 unique_suffix += 1;
-                unique_player_name = format!("{unique_player_name}_{unique_suffix}");
+                unique_player_name = format!("{player_name}_{unique_suffix}");
             }
 
             let new_player = Player {
@@ -223,30 +239,32 @@ impl Rooms {
                 .room_shared_state
                 .players
                 .insert(new_player.name.clone(), new_player);
-            unique_player_name
-        })?;
-
-        Ok(player_name)
-    }
-
-    fn players(&mut self, room_number: usize) -> Result<Vec<String>, String> {
-        self.map_room(room_number, |room_handle| {
-            room_handle
+            let current_players = room_handle
                 .room_shared_state
                 .players
                 .keys()
                 .cloned()
-                .collect::<Vec<_>>()
-        })
+                .collect::<Vec<_>>();
+            (unique_player_name, current_players)
+        })?;
+
+        Ok((player_name, current_players))
     }
 
     fn subscribe(&mut self, room_number: usize) -> Result<broadcast::Receiver<Broadcast>, String> {
         self.map_room(room_number, |room_handle| room_handle.channel.subscribe())
     }
+
+    fn send(&mut self, room_number: usize, broadcast: Broadcast) -> Result<(), String> {
+        self.bind_room(room_number, |room_handle| {
+            match room_handle.channel.send(broadcast) {
+                Ok(_) => Ok(()),
+                Err(err) => Err(format!("{err}")),
+            }
+        })
+    }
 }
 
-// Maps rooms to their number. TODO: implement some self contained structure for creating and
-// storing rooms.
 #[cfg(feature = "server")]
 static ROOMS: LazyLock<Mutex<Rooms>> = LazyLock::new(|| Mutex::new(Rooms::new()));
 
@@ -263,9 +281,16 @@ struct RoomServerState {
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+enum RoomStage {
+    Lobby,
+    Round(usize),
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 struct RoomSharedState {
     room_number: usize,
     players: HashMap<String, Player>,
+    stage: RoomStage,
 }
 
 impl RoomSharedState {
@@ -273,6 +298,7 @@ impl RoomSharedState {
         RoomSharedState {
             room_number,
             players: HashMap::from([(initial_player.name.clone(), initial_player)]),
+            stage: RoomStage::Lobby,
         }
     }
 }
@@ -291,35 +317,48 @@ enum ClientMessage {
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 enum ServerMessage {
-    /*
-    RoomCreated { room_number: usize },
-    GameStarted { room_number: usize },
-    */
-    TmpRoomJoined {
+    YouJoined {
         room_number: usize,
-        player_name: String,
+        your_name: String,
+        current_players: Vec<String>,
+    },
+    OtherPlayerJoined {
+        name: String,
     },
 }
 
 #[derive(Clone)]
 enum Broadcast {
-    RoomCreated { room_number: usize },
-    GameStarted { room_number: usize },
+    PlayerJoined { name: String },
 }
 
-// returns room number and player name if joined/created successfully
+// returns room number, player name and current_players if joined/created successfully
 #[cfg(feature = "server")]
-fn handle_first_msg(client_msg: ClientMessage) -> Result<(usize, String), String> {
+fn handle_first_msg(client_msg: ClientMessage) -> Result<(usize, String, Vec<String>), String> {
     match client_msg {
         ClientMessage::JoinRoom {
             room_number,
             player_name,
         } => {
-            let new_player_name = ROOMS
+            let (new_player_name, current_players) = ROOMS
                 .lock()
                 .unwrap()
                 .player_join(room_number, player_name)?;
-            Ok((room_number, new_player_name))
+            match ROOMS.lock().unwrap().send(
+                room_number,
+                Broadcast::PlayerJoined {
+                    name: new_player_name.clone(),
+                },
+            ) {
+                Ok(()) => (),
+                Err(err) => {
+                    // We should still return okay because we updated server state. other clients can
+                    // sync back up. Or, we could rely on broadcast message to confirm ourselves
+                    // joining.
+                    println!("Failed to broadcast player joining {err}")
+                }
+            };
+            Ok((room_number, new_player_name, current_players))
         }
         ClientMessage::CreateRoom { player_name } => {
             let player = Player {
@@ -327,7 +366,7 @@ fn handle_first_msg(client_msg: ClientMessage) -> Result<(usize, String), String
                 correct_guesses_per_round: vec![0, 0, 0, 0],
             };
             let room_number = ROOMS.lock().unwrap().create_room(player)?;
-            Ok((room_number, player_name))
+            Ok((room_number, player_name.clone(), vec![player_name]))
         }
         ClientMessage::StartGame {} => {
             Err("Unexpected request to start game, player not in room yet.".to_string())
@@ -337,54 +376,38 @@ fn handle_first_msg(client_msg: ClientMessage) -> Result<(usize, String), String
 
 #[cfg(feature = "server")]
 fn handle_msg(
-    _client_msg: Result<ClientMessage, WebsocketError>,
-    _socket: &mut TypedWebsocket<ClientMessage, ServerMessage>,
+    client_msg: Result<ClientMessage, WebsocketError>,
+    socket: &mut TypedWebsocket<ClientMessage, ServerMessage>,
 ) -> Result<(), String> {
-    Ok(())
-    /*
     match client_msg {
-        Ok(ClientMessage::CreateRoom { player_name }) => {
-            let initial_player = Player {
-                name: player_name,
-                correct_guesses_per_round: vec![0, 0, 0, 0],
-            };
-            let room_number = ROOMS.lock().unwrap().create_room(initial_player)?;
-            match UPDATES.send(Broadcast::RoomCreated { room_number }) {
-                Ok(_) => Ok(()),
-                Err(send_error) => Err(format!("{send_error}")),
-            }
-        }
-
-        Ok(ClientMessage::StartGame { room_number }) => {
-            match UPDATES.send(Broadcast::GameStarted { room_number }) {
-                Ok(_) => Ok(()),
-                Err(send_error) => Err(format!("{send_error}")),
-            }
+        Ok(ClientMessage::JoinRoom {
+            room_number,
+            player_name,
+        }) => Err(format!(
+            "Received JoinRoom message from player {player_name}, for room {room_number}, but they're already in a room"
+        )),
+        Ok(ClientMessage::CreateRoom{player_name}) => Err(format!(
+            "Received CreateRoom message from player {player_name} but they're already in a room"
+        )),
+        Ok(ClientMessage::StartGame {}) => {
+            // TODO
+            Ok(())
         }
         Err(websocket_error) => Err(format!("{websocket_error}")),
-    }*/
+    }
 }
 
 #[cfg(feature = "server")]
 async fn handle_broadcast(
-    _broadcast: Result<Broadcast, RecvError>,
-    _socket: &mut TypedWebsocket<ClientMessage, ServerMessage>,
+    broadcast: Result<Broadcast, RecvError>,
+    socket: &mut TypedWebsocket<ClientMessage, ServerMessage>,
 ) {
-    /*
     match broadcast {
-        Ok(Broadcast::RoomCreated { room_number }) => {
-            let _ = socket
-                .send(ServerMessage::RoomCreated { room_number })
-                .await;
-        }
-        Ok(Broadcast::GameStarted { room_number }) => {
-            let _ = socket
-                .send(ServerMessage::GameStarted { room_number })
-                .await;
+        Ok(Broadcast::PlayerJoined { name }) => {
+            let _ = socket.send(ServerMessage::OtherPlayerJoined { name }).await;
         }
         Err(_) => (),
     }
-    */
 }
 
 #[get("/api/game_ws")]
@@ -392,21 +415,21 @@ async fn game_socket(options: WebSocketOptions) -> Result<Websocket<ClientMessag
     Ok(options.on_upgrade(
         |mut socket: TypedWebsocket<ClientMessage, ServerMessage>| async move {
             let first_msg = socket.recv().await;
-            let room_number = match first_msg {
-                // TODO: return room to join/create
+            let room_info = match first_msg {
                 Ok(first_msg) => handle_first_msg(first_msg),
                 Err(err) => Err(format!("client left? {err}")),
             };
 
-            match room_number {
+            match room_info {
                 Err(err) => {
                     println!("client didn't join room: {err}")
                 }
-                Ok((room_number, player_name)) => {
+                Ok((room_number, player_name, current_players)) => {
                     let _ = socket
-                        .send(ServerMessage::TmpRoomJoined {
+                        .send(ServerMessage::YouJoined {
                             room_number,
-                            player_name,
+                            your_name: player_name,
+                            current_players,
                         })
                         .await;
 
@@ -548,18 +571,20 @@ fn App() -> Element {
             match &*birds_resource.read() {
                 Some(Ok(birds)) => rsx! {
                     Multiplayer {}
-                    Sounds { recordings: birds.iter().map(|bird| bird.recording.clone()).collect(), guessing }
-                    Images { image_links: birds.iter().map(|bird| bird.image_links.clone()).collect(), guessing }
+                    Sounds {
+                        recordings: birds.iter().map(|bird| bird.recording.clone()).collect(),
+                        guessing,
+                    }
+                    Images {
+                        image_links: birds.iter().map(|bird| bird.image_links.clone()).collect(),
+                        guessing,
+                    }
                     Redraw { birds_resource, guessing }
                     Score { guessing }
                 },
                 Some(Err(e)) => rsx! {
                     div { class: "status error", "Couldn't load birds: {e}" }
-                    button {
-                        class: "btn primary",
-                        onclick: move |_| birds_resource.restart(),
-                        "Try again"
-                    }
+                    button { class: "btn primary", onclick: move |_| birds_resource.restart(), "Try again" }
                 },
                 None => rsx! {
                     div { class: "status", "Loading birds…" }
@@ -581,18 +606,27 @@ fn Title() -> Element {
 
 #[component]
 fn Multiplayer() -> Element {
-    let mut form_text = use_signal(String::new);
+    let mut create_room_name_text = use_signal(String::new);
+    let mut join_room_name_text = use_signal(String::new);
+    let mut join_room_number_text = use_signal(String::new);
 
     let mut socket = use_websocket(|| game_socket(WebSocketOptions::new()));
     let mut joined_room = use_signal(|| None);
 
     use_future(move || async move {
-        while let Ok(ServerMessage::TmpRoomJoined {
-            room_number,
-            player_name,
-        }) = socket.recv().await
-        {
-            joined_room.set(Some((room_number, player_name)))
+        while let Ok(server_message) = socket.recv().await {
+            match server_message {
+                ServerMessage::YouJoined {
+                    room_number,
+                    your_name,
+                    current_players,
+                } => joined_room.set(Some((room_number, your_name, current_players))),
+                ServerMessage::OtherPlayerJoined { name } => joined_room.with_mut(|joined_room| {
+                    if let Some((_room_number, _your_name, current_players)) = joined_room {
+                        current_players.push(name)
+                    }
+                }),
+            }
         }
     });
     let create_room = async move |player_name: String| match socket
@@ -604,38 +638,81 @@ fn Multiplayer() -> Element {
         Ok(()) => (),
         Err(weberr) => error!("{}", weberr),
     };
+    let join_room = async move |room_number: usize, player_name: String| match socket
+        .send(ClientMessage::JoinRoom {
+            room_number,
+            player_name: player_name.clone(),
+        })
+        .await
+    {
+        Ok(()) => (),
+        Err(weberr) => error!("{}", weberr),
+    };
 
+    // TODO: on invalid room number, show error
     rsx! {
         div {
             match &*joined_room.read() {
-                Some((room_number, player_name)) => {
-                    rsx!{
-                    p {"Joined {room_number} as {player_name}"}
+                Some((room_number, player_name, current_players)) => {
+                    rsx! {
+                        p { "Joined {room_number} as {player_name}" }
+                        for player in current_players {
+                            div {
+                                key: "{player}",
+                                p { "Player: {player}" },
+                            }
+                        }
                     }
-                },
-                None => {rsx!{
-
-        form {
-            onsubmit: move |evt| {
-                evt.prevent_default();
-                let name = form_text();
-                form_text.set(String::new());
-
-                async move {
-                create_room(name).await
                 }
-            },
-            input {
-                r#type: "text",
-                placeholder: "Type here",
-                value: "{form_text}",
-                oninput: move |evt| form_text.set(evt.value()),
-            }
-            button { r#type: "submit", "Submit" }
-        }
+                None => {
+                    rsx! {
+                        form {
+                            onsubmit: move |evt| {
+                                evt.prevent_default();
+                                let name = create_room_name_text();
+                                create_room_name_text.set(String::new());
+                                async move { create_room(name).await }
+                            },
+                            input {
+                                r#type: "text",
+                                placeholder: "Player name",
+                                value: "{create_room_name_text}",
+                                oninput: move |evt| create_room_name_text.set(evt.value()),
+                            }
+                            button { r#type: "submit", "Create Room" }
+                        }
 
-
-                }},
+                        form {
+                            onsubmit: move |evt| {
+                                evt.prevent_default();
+                                let room_number = join_room_number_text().trim().parse::<usize>();
+                                let name = join_room_name_text();
+                                if room_number.is_ok() {
+                                    join_room_number_text.set(String::new());
+                                    join_room_name_text.set(String::new());
+                                }
+                                async move {
+                                    if let Ok(room_number) = room_number {
+                                        join_room(room_number, name).await
+                                    }
+                                }
+                            },
+                            input {
+                                r#type: "text",
+                                placeholder: "Player name",
+                                value: "{join_room_name_text}",
+                                oninput: move |evt| join_room_name_text.set(evt.value()),
+                            }
+                            input {
+                                r#type: "text",
+                                placeholder: "Room number",
+                                value: "{join_room_number_text}",
+                                oninput: move |evt| join_room_number_text.set(evt.value()),
+                            }
+                            button { r#type: "submit", "Join Room" }
+                        }
+                    }
+                }
             }
         }
 
@@ -766,7 +843,10 @@ fn Sounds(recordings: Vec<Recording>, mut guessing: Signal<Guessing>) -> Element
                         key: "{audio_box}",
                         class: "{card_class(audio_box)}",
                         onclick: select(audio_box),
-                        audio { id: "{audio_element_id(audio_box)}", src: "{recording_for(audio_box).url}" }
+                        audio {
+                            id: "{audio_element_id(audio_box)}",
+                            src: "{recording_for(audio_box).url}",
+                        }
                         div { class: "sound-label", "Call {audio_box + 1}" }
                         div { class: "wave",
                             for bar in 0..7 {
@@ -788,12 +868,17 @@ fn Sounds(recordings: Vec<Recording>, mut guessing: Signal<Guessing>) -> Element
                         match &guessing.read().submitted {
                             None => rsx! {},
                             Some(submitted) => {
-                                let correct = submitted[audio_box] == guessing.read().sound_positions[audio_box];
+                                let correct = submitted[audio_box]
+                                    == guessing.read().sound_positions[audio_box];
                                 let name = &recording_for(audio_box).metadata.en;
                                 if correct {
-                                    rsx! { div { class: "result correct", "✓ {name}" } }
+                                    rsx! {
+                                        div { class: "result correct", "✓ {name}" }
+                                    }
                                 } else {
-                                    rsx! { div { class: "result incorrect", "✗ It was {name}" } }
+                                    rsx! {
+                                        div { class: "result incorrect", "✗ It was {name}" }
+                                    }
                                 }
                             }
                         }
@@ -831,25 +916,24 @@ fn DirectionalVote(
 
     rsx! {
 
-                if *user_voted_either_direction.read() {
-                    div {"{vote_text(num_votes)}"}
-                } else {
+        if *user_voted_either_direction.read() {
+            div { "{vote_text(num_votes)}" }
+        } else {
 
+            button {
+                onclick: move |_| {
 
-                button {
-                    onclick: move |_| {
+                    spawn(async move {
+                        if upvote_sound(recording_id()).await.is_ok() {
+                            user_voted_this_direction.set(true);
+                            user_voted_either_direction.set(true);
+                        }
+                    });
+                },
+                "{vote_text(num_votes)}"
 
-                        spawn(async move {
-                            if upvote_sound(recording_id()).await.is_ok() {
-                                user_voted_this_direction.set(true);
-                                user_voted_either_direction.set(true);
-                            }
-                        });
-                    },
-                             "{vote_text(num_votes)}"
-
-
-                    }}
+            }
+        }
     }
 }
 
@@ -865,21 +949,29 @@ fn Votes(recording_id: ReadSignal<String>) -> Element {
 
     rsx! {
         match &*ratings_resource.read() {
-            Some(Ok((upvotes, downvotes))) =>  {
+            Some(Ok((upvotes, downvotes))) => {
                 let num_upvotes = use_signal(|| *upvotes);
                 let num_downvotes = use_signal(|| *downvotes);
                 rsx! {
-                DirectionalVote{recording_id, num_votes:num_upvotes, is_upvote:true, user_voted_either_direction}
-                DirectionalVote{recording_id, num_votes:num_downvotes, is_upvote:false, user_voted_either_direction}
+                    DirectionalVote {
+                        recording_id,
+                        num_votes: num_upvotes,
+                        is_upvote: true,
+                        user_voted_either_direction,
+                    }
+                    DirectionalVote {
+                        recording_id,
+                        num_votes: num_downvotes,
+                        is_upvote: false,
+                        user_voted_either_direction,
+                    }
                 }
-
-
-            },
+            }
             Some(Err(_)) => rsx! {
-                div {"Failed to fetch votes"}
+                div { "Failed to fetch votes" }
             },
             None => rsx! {
-                div {"Loading votes..."}
+                div { "Loading votes..." }
             },
         }
     }
@@ -907,8 +999,14 @@ fn Images(image_links: Vec<ImageLinks>, mut guessing: Signal<Guessing>) -> Eleme
             h2 { class: "panel-title", "Birds" }
             div { id: "pictures", class: "{pictures_class}",
                 for bird_image in 0..5 {
-                    div { key: "{bird_image}", class: "photo", onclick: guess(bird_image),
-                        img { src: "{image_links[bird_image].medium_url}", alt: "" }
+                    div {
+                        key: "{bird_image}",
+                        class: "photo",
+                        onclick: guess(bird_image),
+                        img {
+                            src: "{image_links[bird_image].medium_url}",
+                            alt: "",
+                        }
                         div { class: "name", "{image_links[bird_image].en}" }
                     }
                 }
