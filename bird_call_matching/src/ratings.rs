@@ -17,24 +17,18 @@ fn open_db() -> Result<rusqlite::Connection, ServerFnError> {
 }
 
 #[server]
-pub async fn upvote_sound(id: String) -> Result<(), ServerFnError> {
+pub async fn vote_sound(id: String, is_upvote: bool) -> Result<(), ServerFnError> {
+    let (field, values) = if is_upvote {
+        ("upvotes", "?1, 1, 0")
+    } else {
+        ("downvotes", "?1, 0, 1")
+    };
     open_db()?
         .execute(
-            "INSERT INTO sound_ratings (id, upvotes, downvotes) VALUES (?1, 1, 0)
-             ON CONFLICT(id) DO UPDATE SET upvotes = upvotes + 1",
-            (id,),
-        )
-        .map_err(to_server_error)?;
-
-    Ok(())
-}
-
-#[server]
-pub async fn downvote_sound(id: String) -> Result<(), ServerFnError> {
-    open_db()?
-        .execute(
-            "INSERT INTO sound_ratings (id, upvotes, downvotes) VALUES (?1, 0, 1)
-             ON CONFLICT(id) DO UPDATE SET downvotes = downvotes + 1",
+            &format!(
+                "INSERT INTO sound_ratings (id, upvotes, downvotes) VALUES ({values})
+                    ON CONFLICT(id) DO UPDATE SET {field} = {field} + 1"
+            ),
             (id,),
         )
         .map_err(to_server_error)?;

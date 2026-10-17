@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::ratings::{get_ratings, upvote_sound};
+use crate::ratings::{get_ratings, vote_sound};
 
 #[component]
 pub fn Votes(recording_id: ReadSignal<String>) -> Element {
@@ -74,7 +74,7 @@ fn DirectionalVote(
             button {
                 onclick: move |_| {
                     spawn(async move {
-                        if upvote_sound(recording_id()).await.is_ok() {
+                        if vote_sound(recording_id(), is_upvote).await.is_ok() {
                             user_voted_this_direction.set(true);
                             user_voted_either_direction.set(true);
                         }
