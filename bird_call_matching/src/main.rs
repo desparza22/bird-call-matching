@@ -1,3 +1,4 @@
+use dioxus::logger::tracing::{debug, error, info, warn};
 use dioxus::prelude::dioxus_fullstack::{
     use_websocket, WebSocketOptions, Websocket, WebsocketError,
 };
@@ -47,8 +48,9 @@ struct Bird {
 
 /*
  * multiplayer plan:
- * 1. user can create a room, they type in their name and the room name
- * 2. user can try to connect to a room. they type in their name and the room name
+ * 1. user can create a room, they type in their name and get back a room name
+ * 2. user can try to connect to a room. they type in the room number and name, numbers appended to
+ *    name to resolve conflict
  * 3. users request a random seed from the server for their room. on re-draw, server sends the
  *    room's seed to players waiting to join, as well as the round number
  * 4. on join, player generates a layout with (room_seed + round_number) as their rng seed. in
@@ -137,8 +139,60 @@ async fn get_ratings(id: String) -> Result<(i64, i64), ServerFnError> {
     }
 }
 
+struct Rooms {
+    active_rooms: HashMap<usize, Room>,
+    available_room_ids: Vec<usize>,
+}
+
+impl Rooms {
+    fn new() -> Rooms {
+        let active_rooms = HashMap::new();
+
+        let max_rooms = 65000;
+        let mut available_room_ids = Vec::with_capacity(max_rooms);
+        for i in 0..max_rooms {
+            available_room_ids.push(i);
+        }
+        Rooms {
+            active_rooms,
+            available_room_ids,
+        }
+    }
+
+    fn create_room(&mut self, initial_player: Player) -> Result<usize, String> {
+        let room_number = match self.available_room_ids.pop() {
+            Some(number) => Ok(number),
+            None => Err("No available capacity for new rooms"),
+        }?;
+
+        self.active_rooms
+            .insert(room_number, Room::new(room_number, initial_player));
+        Ok(room_number)
+    }
+
+    fn map_room<A>(&mut self, room_number: usize, f: impl Fn(&Room) -> A) -> Result<A, String> {
+        match self.active_rooms.get(&room_number) {
+            Some(room) => Ok(f(room)),
+            None => Err("Invalid room number".to_string()),
+        }
+    }
+
+    // Returns Ok(String) with the actual name for the player, possibly modified to avoid
+    // collisions
+    fn player_join(&mut self, room_number: usize, player_name: String) -> Result<String, String> {}
+
+    fn players(&self, room_number: usize) -> Result<Vec<Player>, String> {
+        match self.active_rooms.get(&room_number) {
+            Some(room) => Ok(room.players.clone()),
+            None => Err("Invalid room number".to_string()),
+        }
+    }
+}
+
+// Maps rooms to their number. TODO: implement some self contained structure for creating and
+// storing rooms.
 #[cfg(feature = "server")]
-static ROOMS: LazyLock<Mutex<HashMap<String, Room>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+static ROOMS: LazyLock<Mutex<Rooms>> = LazyLock::new(|| Mutex::new(Rooms::new()));
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 struct Player {
@@ -148,30 +202,35 @@ struct Player {
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 struct Room {
+    room_number: usize,
     players: Vec<Player>,
+}
+
+impl Room {
+    fn new(room_number: usize, initial_player: Player) -> Room {
+        Room {
+            room_number,
+            players: vec![initial_player],
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 enum ClientMessage {
-    CreateRoom {
-        room_name: String,
-        player_name: String,
-    },
-    StartGame {
-        room_name: String,
-    },
+    CreateRoom { player_name: String },
+    StartGame { room_number: usize },
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 enum ServerMessage {
-    RoomCreated { room: Room },
-    GameStarted { room_name: String },
+    RoomCreated { room_number: usize },
+    GameStarted { room_number: usize },
 }
 
 #[derive(Clone)]
 enum Broadcast {
-    RoomCreated { room: Room },
-    GameStarted { room_name: String },
+    RoomCreated { room_number: usize },
+    GameStarted { room_number: usize },
 }
 
 #[cfg(feature = "server")]
@@ -184,25 +243,20 @@ fn handle_client_message(
     _socket: &mut TypedWebsocket<ClientMessage, ServerMessage>,
 ) -> Result<(), String> {
     match client_msg {
-        Ok(ClientMessage::CreateRoom {
-            room_name,
-            player_name,
-        }) => {
-            let room = Room {
-                players: vec![Player {
-                    name: player_name,
-                    correct_guesses_per_round: vec![0, 0, 0, 0],
-                }],
+        Ok(ClientMessage::CreateRoom { player_name }) => {
+            let initial_player = Player {
+                name: player_name,
+                correct_guesses_per_round: vec![0, 0, 0, 0],
             };
-            let _ = ROOMS.lock().unwrap().insert(room_name, room.clone());
-            match UPDATES.send(Broadcast::RoomCreated { room }) {
+            let room_number = ROOMS.lock().unwrap().create_room(initial_player)?;
+            match UPDATES.send(Broadcast::RoomCreated { room_number }) {
                 Ok(_) => Ok(()),
                 Err(send_error) => Err(format!("{send_error}")),
             }
         }
 
-        Ok(ClientMessage::StartGame { room_name }) => {
-            match UPDATES.send(Broadcast::GameStarted { room_name }) {
+        Ok(ClientMessage::StartGame { room_number }) => {
+            match UPDATES.send(Broadcast::GameStarted { room_number }) {
                 Ok(_) => Ok(()),
                 Err(send_error) => Err(format!("{send_error}")),
             }
@@ -217,13 +271,15 @@ async fn handle_broadcast(
     socket: &mut TypedWebsocket<ClientMessage, ServerMessage>,
 ) {
     match broadcast {
-        Ok(Broadcast::RoomCreated { room }) => {
+        Ok(Broadcast::RoomCreated { room_number }) => {
             let _ = socket
-                .send(ServerMessage::RoomCreated { room: room.clone() })
+                .send(ServerMessage::RoomCreated { room_number })
                 .await;
         }
-        Ok(Broadcast::GameStarted { room_name }) => {
-            let _ = socket.send(ServerMessage::GameStarted { room_name }).await;
+        Ok(Broadcast::GameStarted { room_number }) => {
+            let _ = socket
+                .send(ServerMessage::GameStarted { room_number })
+                .await;
         }
         Err(_) => (),
     }
@@ -241,7 +297,7 @@ async fn game_socket(options: WebSocketOptions) -> Result<Websocket<ClientMessag
                         match
                         handle_client_message(client_msg, &mut socket) {
                             Ok(()) => (),
-                            Err(_) => break
+                            Err(_) => { println!("err"); break}
                         }
                     },
 
@@ -401,20 +457,21 @@ fn Multiplayer() -> Element {
     let mut form_text = use_signal(String::new);
 
     let mut socket = use_websocket(|| game_socket(WebSocketOptions::new()));
-    let mut rooms = use_signal(Vec::<Room>::new);
+    let mut rooms = use_signal(Vec::<usize>::new);
 
     use_future(move || async move {
-        while let Ok(ServerMessage::RoomCreated { room }) = socket.recv().await {
-            rooms.write().push(room)
+        while let Ok(ServerMessage::RoomCreated { room_number }) = socket.recv().await {
+            rooms.write().push(room_number)
         }
     });
-    let create_room = async move |room_name: String| {
-        let _ = socket
-            .send(ClientMessage::CreateRoom {
-                room_name: room_name.clone(),
-                player_name: String::from("foo"),
-            })
-            .await;
+    let create_room = async move |player_name: String| match socket
+        .send(ClientMessage::CreateRoom {
+            player_name: player_name.clone(),
+        })
+        .await
+    {
+        Ok(()) => (),
+        Err(weberr) => error!("{}", weberr),
     };
 
     rsx! {
@@ -439,9 +496,8 @@ fn Multiplayer() -> Element {
             for (idx, room) in rooms().iter().enumerate() {
                 div {
                 key: "{idx}",
-                p { "{room.players[0].name}" }
+                p { "{room}" }
                 }
-
             }
         }
 
