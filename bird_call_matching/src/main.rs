@@ -59,6 +59,18 @@ struct Bird {
  *    user is ready. then correct guesses are displayed
  * 6. once both users click continue, new round begins (and they receive new round number from the
  *    server)
+ *
+ *
+ *
+ *    room holds broadcast channel? so that each connected player can get updates on room state
+ *    changes? room owner is authoritative?
+ *    maybe:
+ *    1. room holds state and channel
+ *    2. clients try to apply state updates. when successful, send to channel if necessary, before
+ *       releasing lock on room
+ *
+ *    client and server keep copies of room state, try to keep operations idempotent. at some
+ *    interval (like between rounds) state can get re-synced
  */
 struct Guessing {
     // what sounds are in each sound box
@@ -139,11 +151,13 @@ async fn get_ratings(id: String) -> Result<(i64, i64), ServerFnError> {
     }
 }
 
+#[cfg(feature = "server")]
 struct Rooms {
-    active_rooms: HashMap<usize, Room>,
+    active_rooms: HashMap<usize, RoomServerState>,
     available_room_ids: Vec<usize>,
 }
 
+#[cfg(feature = "server")]
 impl Rooms {
     fn new() -> Rooms {
         let active_rooms = HashMap::new();
@@ -165,27 +179,69 @@ impl Rooms {
             None => Err("No available capacity for new rooms"),
         }?;
 
-        self.active_rooms
-            .insert(room_number, Room::new(room_number, initial_player));
+        self.active_rooms.insert(
+            room_number,
+            RoomServerState {
+                channel: broadcast::channel(100).0,
+                room_shared_state: RoomSharedState::new(room_number, initial_player),
+            },
+        );
         Ok(room_number)
     }
 
-    fn map_room<A>(&mut self, room_number: usize, f: impl Fn(&Room) -> A) -> Result<A, String> {
-        match self.active_rooms.get(&room_number) {
-            Some(room) => Ok(f(room)),
+    fn map_room<A>(
+        &mut self,
+        room_number: usize,
+        f: impl FnOnce(&mut RoomServerState) -> A,
+    ) -> Result<A, String> {
+        match self.active_rooms.get_mut(&room_number) {
+            Some(room_handle) => Ok(f(room_handle)),
             None => Err("Invalid room number".to_string()),
         }
     }
 
     // Returns Ok(String) with the actual name for the player, possibly modified to avoid
     // collisions
-    fn player_join(&mut self, room_number: usize, player_name: String) -> Result<String, String> {}
+    fn player_join(&mut self, room_number: usize, player_name: String) -> Result<String, String> {
+        let player_name = self.map_room(room_number, |room_handle| {
+            let mut unique_player_name = player_name;
+            let mut unique_suffix = 0;
+            while room_handle
+                .room_shared_state
+                .players
+                .contains_key(&unique_player_name)
+            {
+                unique_suffix += 1;
+                unique_player_name = format!("{unique_player_name}_{unique_suffix}");
+            }
 
-    fn players(&self, room_number: usize) -> Result<Vec<Player>, String> {
-        match self.active_rooms.get(&room_number) {
-            Some(room) => Ok(room.players.clone()),
-            None => Err("Invalid room number".to_string()),
-        }
+            let new_player = Player {
+                name: unique_player_name.clone(),
+                correct_guesses_per_round: vec![0, 0, 0, 0],
+            };
+            let _ = room_handle
+                .room_shared_state
+                .players
+                .insert(new_player.name.clone(), new_player);
+            unique_player_name
+        })?;
+
+        Ok(player_name)
+    }
+
+    fn players(&mut self, room_number: usize) -> Result<Vec<String>, String> {
+        self.map_room(room_number, |room_handle| {
+            room_handle
+                .room_shared_state
+                .players
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+    }
+
+    fn subscribe(&mut self, room_number: usize) -> Result<broadcast::Receiver<Broadcast>, String> {
+        self.map_room(room_number, |room_handle| room_handle.channel.subscribe())
     }
 }
 
@@ -200,31 +256,49 @@ struct Player {
     correct_guesses_per_round: Vec<u32>,
 }
 
-#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
-struct Room {
-    room_number: usize,
-    players: Vec<Player>,
+#[cfg(feature = "server")]
+struct RoomServerState {
+    channel: broadcast::Sender<Broadcast>,
+    room_shared_state: RoomSharedState,
 }
 
-impl Room {
-    fn new(room_number: usize, initial_player: Player) -> Room {
-        Room {
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+struct RoomSharedState {
+    room_number: usize,
+    players: HashMap<String, Player>,
+}
+
+impl RoomSharedState {
+    fn new(room_number: usize, initial_player: Player) -> RoomSharedState {
+        RoomSharedState {
             room_number,
-            players: vec![initial_player],
+            players: HashMap::from([(initial_player.name.clone(), initial_player)]),
         }
     }
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 enum ClientMessage {
-    CreateRoom { player_name: String },
-    StartGame { room_number: usize },
+    JoinRoom {
+        room_number: usize,
+        player_name: String,
+    },
+    CreateRoom {
+        player_name: String,
+    },
+    StartGame {},
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 enum ServerMessage {
+    /*
     RoomCreated { room_number: usize },
     GameStarted { room_number: usize },
+    */
+    TmpRoomJoined {
+        room_number: usize,
+        player_name: String,
+    },
 }
 
 #[derive(Clone)]
@@ -233,15 +307,41 @@ enum Broadcast {
     GameStarted { room_number: usize },
 }
 
+// returns room number and player name if joined/created successfully
 #[cfg(feature = "server")]
-static UPDATES: std::sync::LazyLock<broadcast::Sender<Broadcast>> =
-    std::sync::LazyLock::new(|| broadcast::channel(100).0);
+fn handle_first_msg(client_msg: ClientMessage) -> Result<(usize, String), String> {
+    match client_msg {
+        ClientMessage::JoinRoom {
+            room_number,
+            player_name,
+        } => {
+            let new_player_name = ROOMS
+                .lock()
+                .unwrap()
+                .player_join(room_number, player_name)?;
+            Ok((room_number, new_player_name))
+        }
+        ClientMessage::CreateRoom { player_name } => {
+            let player = Player {
+                name: player_name.clone(),
+                correct_guesses_per_round: vec![0, 0, 0, 0],
+            };
+            let room_number = ROOMS.lock().unwrap().create_room(player)?;
+            Ok((room_number, player_name))
+        }
+        ClientMessage::StartGame {} => {
+            Err("Unexpected request to start game, player not in room yet.".to_string())
+        }
+    }
+}
 
 #[cfg(feature = "server")]
-fn handle_client_message(
-    client_msg: Result<ClientMessage, WebsocketError>,
+fn handle_msg(
+    _client_msg: Result<ClientMessage, WebsocketError>,
     _socket: &mut TypedWebsocket<ClientMessage, ServerMessage>,
 ) -> Result<(), String> {
+    Ok(())
+    /*
     match client_msg {
         Ok(ClientMessage::CreateRoom { player_name }) => {
             let initial_player = Player {
@@ -262,14 +362,15 @@ fn handle_client_message(
             }
         }
         Err(websocket_error) => Err(format!("{websocket_error}")),
-    }
+    }*/
 }
 
 #[cfg(feature = "server")]
 async fn handle_broadcast(
-    broadcast: Result<Broadcast, RecvError>,
-    socket: &mut TypedWebsocket<ClientMessage, ServerMessage>,
+    _broadcast: Result<Broadcast, RecvError>,
+    _socket: &mut TypedWebsocket<ClientMessage, ServerMessage>,
 ) {
+    /*
     match broadcast {
         Ok(Broadcast::RoomCreated { room_number }) => {
             let _ = socket
@@ -283,26 +384,52 @@ async fn handle_broadcast(
         }
         Err(_) => (),
     }
+    */
 }
 
 #[get("/api/game_ws")]
 async fn game_socket(options: WebSocketOptions) -> Result<Websocket<ClientMessage, ServerMessage>> {
     Ok(options.on_upgrade(
         |mut socket: TypedWebsocket<ClientMessage, ServerMessage>| async move {
-            let mut updates = UPDATES.subscribe();
+            let first_msg = socket.recv().await;
+            let room_number = match first_msg {
+                // TODO: return room to join/create
+                Ok(first_msg) => handle_first_msg(first_msg),
+                Err(err) => Err(format!("client left? {err}")),
+            };
 
-            loop {
-                tokio::select! {
-                    client_msg = socket.recv() => {
-                        match
-                        handle_client_message(client_msg, &mut socket) {
-                            Ok(()) => (),
-                            Err(_) => { println!("err"); break}
+            match room_number {
+                Err(err) => {
+                    println!("client didn't join room: {err}")
+                }
+                Ok((room_number, player_name)) => {
+                    let _ = socket
+                        .send(ServerMessage::TmpRoomJoined {
+                            room_number,
+                            player_name,
+                        })
+                        .await;
+
+                    let receiver = ROOMS.lock().unwrap().subscribe(room_number);
+                    match receiver {
+                        Err(err) => {
+                            println!("couldn't subscribe to room updates. {err}")
                         }
-                    },
+                        Ok(mut receiver) => loop {
+                            tokio::select! {
+                                client_msg = socket.recv() => {
+                                    match
+                                    handle_msg(client_msg, &mut socket) {
+                                        Ok(()) => (),
+                                        Err(_) => { println!("err"); break}
+                                    }
+                                },
 
-                    broadcast = updates.recv() => {
-                        handle_broadcast(broadcast, &mut socket).await
+                                broadcast = receiver.recv() => {
+                                    handle_broadcast(broadcast, &mut socket).await
+                                }
+                            }
+                        },
                     }
                 }
             }
@@ -457,11 +584,15 @@ fn Multiplayer() -> Element {
     let mut form_text = use_signal(String::new);
 
     let mut socket = use_websocket(|| game_socket(WebSocketOptions::new()));
-    let mut rooms = use_signal(Vec::<usize>::new);
+    let mut joined_room = use_signal(|| None);
 
     use_future(move || async move {
-        while let Ok(ServerMessage::RoomCreated { room_number }) = socket.recv().await {
-            rooms.write().push(room_number)
+        while let Ok(ServerMessage::TmpRoomJoined {
+            room_number,
+            player_name,
+        }) = socket.recv().await
+        {
+            joined_room.set(Some((room_number, player_name)))
         }
     });
     let create_room = async move |player_name: String| match socket
@@ -475,13 +606,23 @@ fn Multiplayer() -> Element {
     };
 
     rsx! {
+        div {
+            match &*joined_room.read() {
+                Some((room_number, player_name)) => {
+                    rsx!{
+                    p {"Joined {room_number} as {player_name}"}
+                    }
+                },
+                None => {rsx!{
+
         form {
             onsubmit: move |evt| {
                 evt.prevent_default();
+                let name = form_text();
                 form_text.set(String::new());
 
                 async move {
-                create_room(form_text()).await
+                create_room(name).await
                 }
             },
             input {
@@ -492,12 +633,9 @@ fn Multiplayer() -> Element {
             }
             button { r#type: "submit", "Submit" }
         }
-        div {
-            for (idx, room) in rooms().iter().enumerate() {
-                div {
-                key: "{idx}",
-                p { "{room}" }
-                }
+
+
+                }},
             }
         }
 
@@ -690,10 +828,8 @@ fn DirectionalVote(
     };
 
     let num_votes = &*num_votes.read();
+
     rsx! {
-    // TODO: factor out directional vote button, so we don't repeat for up and down votes. probably
-    // need some "user_voted: Signal<bool> param so if the user upvotes, the downvote button also
-    // disappears and vice-versa
 
                 if *user_voted_either_direction.read() {
                     div {"{vote_text(num_votes)}"}
