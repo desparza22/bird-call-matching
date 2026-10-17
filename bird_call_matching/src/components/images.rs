@@ -17,13 +17,13 @@ pub fn Images(mut board_state: Signal<BoardState>) -> Element {
         section {
             h2 { class: "panel-title", "Birds" }
             div { id: "pictures", class: "{pictures_class}",
-                for (bird_image, links) in board.image_links.iter().enumerate() {
+                for (bird_image, image) in board.images.iter().enumerate() {
                     div {
                         key: "{bird_image}",
                         class: "photo",
                         onclick: guess(bird_image),
-                        img { src: "{links.medium_url}", alt: "" }
-                        div { class: "name", "{links.en}" }
+                        img { src: "{image.url}", alt: "" }
+                        div { class: "name", "{image.name}" }
                     }
                 }
             }

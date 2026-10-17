@@ -4,7 +4,7 @@ use crate::board_state::BoardState;
 
 #[component]
 pub fn Redraw(
-    mut birds_resource: Resource<Result<(), reqwest::Error>>,
+    mut birds_resource: Resource<Result<(), ServerFnError>>,
     mut board_state: Signal<BoardState>,
 ) -> Element {
     let submit = |guesses: Vec<usize>| move |_| board_state.write().submit(guesses.clone());

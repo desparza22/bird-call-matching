@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
 use super::{Images, Multiplayer, Redraw, Score, Sounds, Title};
-use crate::birds::choose_birds;
+use crate::birds::random_birds;
 use crate::board_state::BoardState;
 
 static CSS: Asset = asset!("/assets/main.css");
@@ -13,9 +13,9 @@ pub fn App() -> Element {
     // Writes the birds into the board before resolving, so the board is already populated on
     // the first render that sees `Some(Ok(()))`.
     let mut birds_resource = use_resource(move || async move {
-        let birds = choose_birds(5).await?;
+        let birds = random_birds(5).await?;
         board_state.write().start_round(birds);
-        Ok::<_, reqwest::Error>(())
+        Ok::<_, ServerFnError>(())
     });
 
     rsx! {

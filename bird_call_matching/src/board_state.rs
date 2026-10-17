@@ -4,14 +4,14 @@
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 
-use crate::birds::{Bird, ImageLinks, Recording};
+use crate::birds::{Bird, BirdImage, Recording};
 
 pub struct BoardState {
     /// the recordings drawn for this round, indexed by bird
     pub recordings: Vec<Recording>,
 
-    /// image links for the birds drawn this round, indexed by bird
-    pub image_links: Vec<ImageLinks>,
+    /// images of the birds drawn this round, indexed by bird
+    pub images: Vec<BirdImage>,
 
     /// what sounds are in each sound box
     pub sound_positions: Vec<usize>,
@@ -33,7 +33,7 @@ impl BoardState {
     pub fn new() -> Self {
         Self {
             recordings: Vec::new(),
-            image_links: Vec::new(),
+            images: Vec::new(),
             sound_positions: Vec::new(),
             sound_guesses: vec![None, None, None],
             selected_sound: None,
@@ -44,10 +44,7 @@ impl BoardState {
 
     /// Loads the birds for a new round and reshuffles which recording goes in which sound box.
     pub fn start_round(&mut self, birds: Vec<Bird>) {
-        (self.recordings, self.image_links) = birds
-            .into_iter()
-            .map(|bird| (bird.recording, bird.image_links))
-            .unzip();
+        (self.recordings, self.images) = birds.into_iter().map(Bird::into_parts).unzip();
 
         self.sound_positions = (0..self.recordings.len()).collect();
         self.sound_positions.shuffle(&mut thread_rng());

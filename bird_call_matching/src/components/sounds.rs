@@ -65,18 +65,18 @@ pub fn Sounds(mut board_state: Signal<BoardState>) -> Element {
                             onclick: listen_and_select(audio_box),
                             "▶ Listen"
                         }
-                        Votes { recording_id: board.recording_for_box(audio_box).metadata.id.clone() }
+                        Votes { recording_id: board.recording_for_box(audio_box).id.clone() }
                         match board.sound_guesses[audio_box] {
                             None => rsx! {},
                             Some(guess) => rsx! {
-                                div { class: "guess", "You guessed {board.recordings[guess].metadata.en}" }
+                                div { class: "guess", "You guessed {board.recordings[guess].name}" }
                             },
                         }
                         match &board.submitted {
                             None => rsx! {},
                             Some(submitted) => {
                                 let correct = submitted[audio_box] == board.sound_positions[audio_box];
-                                let name = &board.recording_for_box(audio_box).metadata.en;
+                                let name = &board.recording_for_box(audio_box).name;
                                 if correct {
                                     rsx! {
                                         div { class: "result correct", "✓ {name}" }
