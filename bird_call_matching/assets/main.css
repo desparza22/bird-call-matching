@@ -1,24 +1,28 @@
 @import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Figtree:wght@400;500;600&display=swap");
 
-/* Colors sampled from a sunlit spruce forest: deep needle shade, bark, the dry forest floor,
-   pale light filtering through the canopy, and the gold of a few autumn leaves. */
+/* Colors sampled from a sunlit spruce forest: dark bark, pale light filtering through the
+   canopy, and the gold of a few autumn leaves. */
 :root {
-    --shade: #141c16;
-    --needle: #233024;
-    --moss: #3d4a35;
-    --bark: #3a2d23;
-    --floor: #5b4532;
+    --bark: #2a1d13;
     --sunlight: #f2e9c9;
     --haze: #c9cdb8;
     --haze-dim: #9a9c86;
     --leaf-gold: #d9a441;
     --leaf-gold-bright: #e8b955;
     --hit: #a3c46c;
-    --miss: #d9774f;
+    --miss: #e08a63;
 
-    --panel: rgba(18, 25, 19, 0.66);
-    --panel-edge: rgba(242, 233, 201, 0.1);
-    --panel-edge-strong: rgba(242, 233, 201, 0.22);
+    /* Solid surfaces, from the page outward: panels sit on the page, cards sit in panels,
+       insets (inputs, highlighted rows) sit in either. Each tier is a clear step lighter or
+       darker than the one it sits on, so nested boxes stay distinct without transparency. */
+    --panel: #18201a;
+    --panel-edge: #36412f;
+    --card: #222c22;
+    --card-hover: #2a3629;
+    --card-edge: #46523d;
+    --inset: #0f1510;
+    --gold-wash: #46391b;
+    --green-wash: #2b3a24;
 
     --display: "Fraunces", Georgia, "Times New Roman", serif;
     --body: "Figtree", "Segoe UI", system-ui, sans-serif;
@@ -34,8 +38,7 @@ html {
     height: 100%;
 }
 
-/* The page is the forest: light breaking through the canopy at the top, a few dark trunks, and
-   the brown forest floor underfoot. */
+/* A solid bark brown. */
 body {
     min-height: 100%;
     margin: 0;
@@ -43,42 +46,7 @@ body {
     font-family: var(--body);
     font-size: 15px;
     line-height: 1.45;
-    background-color: var(--shade);
-    background-image:
-        /* sun glow high in the canopy */
-        radial-gradient(ellipse 70% 45% at 72% -8%, rgba(242, 233, 201, 0.38), transparent 70%),
-        /* slanted light shafts */
-        repeating-linear-gradient(
-            102deg,
-            transparent 0 160px,
-            rgba(242, 233, 201, 0.035) 160px 230px,
-            transparent 230px 420px
-        ),
-        /* the canopy, which the trunks fade up into */
-        linear-gradient(180deg, #2c3a2c 0%, rgba(35, 48, 36, 0.7) 22%, transparent 55%),
-        /* trunks: two patterns with unrelated widths, so the spacing never looks regular */
-        repeating-linear-gradient(
-            90deg,
-            transparent 0 233px,
-            rgba(12, 9, 7, 0.3) 233px 247px,
-            transparent 247px 389px
-        ),
-        repeating-linear-gradient(
-            90deg,
-            transparent 0 101px,
-            rgba(12, 9, 7, 0.18) 101px 107px,
-            transparent 107px 571px
-        ),
-        /* canopy to forest floor */
-        linear-gradient(
-            180deg,
-            #2c3a2c 0%,
-            var(--needle) 30%,
-            #1c2419 62%,
-            var(--bark) 86%,
-            var(--floor) 100%
-        );
-    background-attachment: fixed;
+    background: var(--bark);
 }
 
 :focus-visible {
@@ -109,20 +77,15 @@ body {
 }
 
 .panel,
-.board > section {
+.masthead,
+.actions,
+.status {
     padding: 14px 16px;
     border: 1px solid var(--panel-edge);
-    border-radius: 14px;
     background: var(--panel);
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
 }
 
 /* Title */
-
-.masthead {
-    padding: 4px 4px 2px;
-}
 
 .masthead h1 {
     margin: 0;
@@ -131,7 +94,6 @@ body {
     font-size: 2.4rem;
     letter-spacing: -0.02em;
     line-height: 1;
-    text-shadow: 0 2px 18px rgba(0, 0, 0, 0.35);
 }
 
 .lede {
@@ -148,6 +110,16 @@ body {
     letter-spacing: 0.01em;
 }
 
+/* The board's sections ("Calls", "Birds") have no box of their own; their cards sit straight on
+   the page, so each heading gets a small solid label to stay readable. */
+.board > section .panel-title {
+    display: inline-block;
+    margin-bottom: 8px;
+    padding: 3px 12px;
+    border: 1px solid var(--panel-edge);
+    background: var(--panel);
+}
+
 .status {
     color: var(--haze);
 }
@@ -156,10 +128,15 @@ body {
     color: var(--miss);
 }
 
+/* inside a panel, a status line is plain text rather than a second box */
+.panel .status {
+    padding: 0;
+    border: 0;
+    background: none;
+}
+
 .status.waiting {
     padding: 40px 16px;
-    border: 1px dashed var(--panel-edge-strong);
-    border-radius: 14px;
     text-align: center;
 }
 
@@ -172,9 +149,8 @@ body {
 
 .btn {
     padding: 6px 14px;
-    border: 1px solid var(--panel-edge-strong);
-    border-radius: 999px;
-    background: rgba(242, 233, 201, 0.06);
+    border: 1px solid var(--card-edge);
+    background: var(--card);
     color: var(--sunlight);
     font: inherit;
     font-weight: 600;
@@ -184,8 +160,8 @@ body {
 }
 
 .btn:hover {
-    border-color: var(--haze);
-    background: rgba(242, 233, 201, 0.12);
+    border-color: var(--haze-dim);
+    background: var(--card-hover);
 }
 
 .btn.primary {
@@ -201,6 +177,7 @@ body {
 
 .btn.listen {
     justify-self: start;
+    background: var(--panel);
 }
 
 .room-form {
@@ -216,9 +193,8 @@ body {
     flex: 1;
     min-width: 0;
     padding: 6px 10px;
-    border: 1px solid var(--panel-edge-strong);
-    border-radius: 8px;
-    background: rgba(10, 14, 11, 0.55);
+    border: 1px solid var(--card-edge);
+    background: var(--inset);
     color: var(--sunlight);
     font: inherit;
 }
@@ -242,8 +218,8 @@ body {
 
 .tag {
     padding: 1px 10px;
-    border-radius: 999px;
-    background: rgba(217, 164, 65, 0.18);
+    border: 1px solid var(--leaf-gold);
+    background: var(--gold-wash);
     color: var(--leaf-gold-bright);
     font-size: 0.85rem;
     font-weight: 600;
@@ -321,7 +297,7 @@ body {
 
 /* The current player's row catches the light. */
 .leaderboard tr.you {
-    background: rgba(217, 164, 65, 0.16);
+    background: var(--gold-wash);
     color: var(--leaf-gold-bright);
     font-weight: 700;
 }
@@ -339,24 +315,23 @@ body {
     align-content: start;
     gap: 8px;
     padding: 12px;
-    border: 1px solid var(--panel-edge);
-    border-radius: 12px;
-    background: rgba(242, 233, 201, 0.04);
+    border: 1px solid var(--card-edge);
+    background: var(--card);
     cursor: pointer;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 
 .sound-card:hover {
-    border-color: var(--panel-edge-strong);
+    background: var(--card-hover);
 }
 
 .sound-card.selected {
     border-color: var(--leaf-gold);
-    box-shadow: 0 0 0 3px rgba(217, 164, 65, 0.22);
+    box-shadow: inset 0 0 0 1px var(--leaf-gold);
 }
 
 .sound-card.playing {
-    background: rgba(163, 196, 108, 0.08);
+    background: var(--green-wash);
 }
 
 .sound-label {
@@ -378,7 +353,6 @@ body {
     flex: 1;
     max-width: 8px;
     height: 40%;
-    border-radius: 3px;
     background: var(--haze-dim);
 }
 
@@ -437,15 +411,14 @@ body {
 .vote-count {
     padding: 1px 10px;
     border: 1px solid transparent;
-    border-radius: 999px;
     font: inherit;
     font-size: 0.85rem;
     font-variant-numeric: tabular-nums;
 }
 
 .vote-btn {
-    border-color: var(--panel-edge-strong);
-    background: transparent;
+    border-color: var(--card-edge);
+    background: var(--panel);
     color: var(--sunlight);
     cursor: pointer;
 }
@@ -470,9 +443,8 @@ body {
     display: grid;
     gap: 6px;
     padding: 6px;
-    border: 1px solid transparent;
-    border-radius: 12px;
-    background: rgba(242, 233, 201, 0.04);
+    border: 1px solid var(--card-edge);
+    background: var(--card);
     transition: border-color 0.15s ease, transform 0.15s ease;
 }
 
@@ -482,7 +454,6 @@ body {
     aspect-ratio: 4 / 3;
     max-height: 28vh;
     object-fit: cover;
-    border-radius: 8px;
 }
 
 .photo .name {
@@ -510,7 +481,7 @@ body {
     align-items: center;
     gap: 14px;
     min-height: 38px;
-    padding: 0 4px;
+    padding: 8px 12px;
 }
 
 /* Narrow screens: stack the sidebar above the board */
@@ -544,4 +515,5 @@ body {
     .photo {
         transition: none;
     }
+
 }
