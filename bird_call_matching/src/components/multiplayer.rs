@@ -2,7 +2,14 @@ use dioxus::logger::tracing::error;
 use dioxus::prelude::dioxus_fullstack::{use_websocket, WebSocketOptions};
 use dioxus::prelude::*;
 
-use crate::room::{game_socket, ClientMessage, JoinedRoom, ServerMessage};
+use crate::room::{game_socket, ClientMessage, RoomSharedState, RoomStage, ServerMessage};
+
+/// What this client knows about the room it's in.
+#[derive(Clone, PartialEq, Debug)]
+struct JoinedRoom {
+    player_name: String,
+    room: RoomSharedState,
+}
 
 #[component]
 pub fn Multiplayer() -> Element {
@@ -16,36 +23,20 @@ pub fn Multiplayer() -> Element {
     use_future(move || async move {
         while let Ok(server_message) = socket.recv().await {
             match server_message {
-                ServerMessage::YouJoined {
-                    room_number,
-                    your_name,
-                    current_players,
-                } => joined_room.set(Some(JoinedRoom {
-                    room_number,
+                ServerMessage::YouJoined { your_name, room } => joined_room.set(Some(JoinedRoom {
                     player_name: your_name,
-                    current_players,
+                    room,
                 })),
-                ServerMessage::OtherPlayerJoined { name } => joined_room.with_mut(|joined_room| {
+                ServerMessage::RoomUpdated(room) => joined_room.with_mut(|joined_room| {
                     if let Some(joined_room) = joined_room {
-                        joined_room.current_players.push(name)
+                        joined_room.room = room;
                     }
                 }),
             }
         }
     });
-    let create_room = async move |player_name: String| {
-        if let Err(weberr) = socket.send(ClientMessage::CreateRoom { player_name }).await {
-            error!("{}", weberr);
-        }
-    };
-    let join_room = async move |room_number: usize, player_name: String| {
-        if let Err(weberr) = socket
-            .send(ClientMessage::JoinRoom {
-                room_number,
-                player_name,
-            })
-            .await
-        {
+    let send = move |message: ClientMessage| async move {
+        if let Err(weberr) = socket.send(message).await {
             error!("{}", weberr);
         }
     };
@@ -54,25 +45,22 @@ pub fn Multiplayer() -> Element {
     rsx! {
         div {
             match &*joined_room.read() {
-                Some(JoinedRoom { room_number, player_name, current_players }) => {
-                    rsx! {
-                        p { "Joined {room_number} as {player_name}" }
-                        for player in current_players {
-                            div {
-                                key: "{player}",
-                                p { "Player: {player}" },
-                            }
-                        }
+                Some(JoinedRoom { player_name, room }) => rsx! {
+                    RoomView {
+                        player_name: player_name.clone(),
+                        room: room.clone(),
+                        on_start_game: move |_| send(ClientMessage::StartGame {}),
+                        on_ready: move |_| send(ClientMessage::Ready {}),
                     }
-                }
+                },
                 None => {
                     rsx! {
                         form {
                             onsubmit: move |evt| {
                                 evt.prevent_default();
-                                let name = create_room_name_text();
+                                let player_name = create_room_name_text();
                                 create_room_name_text.set(String::new());
-                                async move { create_room(name).await }
+                                send(ClientMessage::CreateRoom { player_name })
                             },
                             input {
                                 r#type: "text",
@@ -87,14 +75,14 @@ pub fn Multiplayer() -> Element {
                             onsubmit: move |evt| {
                                 evt.prevent_default();
                                 let room_number = join_room_number_text().trim().parse::<usize>();
-                                let name = join_room_name_text();
+                                let player_name = join_room_name_text();
                                 if room_number.is_ok() {
                                     join_room_number_text.set(String::new());
                                     join_room_name_text.set(String::new());
                                 }
                                 async move {
                                     if let Ok(room_number) = room_number {
-                                        join_room(room_number, name).await
+                                        send(ClientMessage::JoinRoom { room_number, player_name }).await
                                     }
                                 }
                             },
@@ -115,6 +103,55 @@ pub fn Multiplayer() -> Element {
                     }
                 }
             }
+        }
+    }
+}
+
+/// The room once this player is in it: who's here, and what to do next for the current stage.
+#[component]
+fn RoomView(
+    player_name: String,
+    room: RoomSharedState,
+    on_start_game: EventHandler,
+    on_ready: EventHandler,
+) -> Element {
+    let room_number = room.room_number;
+    let is_ready = room
+        .players
+        .get(&player_name)
+        .is_some_and(|player| player.ready);
+
+    rsx! {
+        p { "Joined {room_number} as {player_name}" }
+        match room.stage {
+            RoomStage::Lobby => rsx! {
+                for name in room.players.keys() {
+                    div { key: "{name}",
+                        p { "Player: {name}" }
+                    }
+                }
+                if room.is_host(&player_name) {
+                    button { onclick: move |_| on_start_game.call(()), "Start game" }
+                } else {
+                    p { "Waiting for host..." }
+                }
+            },
+            RoomStage::Round(round) => rsx! {
+                p { "Round {round}" }
+                for (name, player) in room.players.iter() {
+                    div { key: "{name}",
+                        p {
+                            "Player: {name}"
+                            if player.ready {
+                                " ✓ ready"
+                            }
+                        }
+                    }
+                }
+                if !is_ready {
+                    button { onclick: move |_| on_ready.call(()), "Ready" }
+                }
+            },
         }
     }
 }

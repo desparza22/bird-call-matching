@@ -29,5 +29,5 @@ mod protocol;
 mod registry;
 mod socket;
 
-pub use protocol::{ClientMessage, JoinedRoom, ServerMessage};
+pub use protocol::{ClientMessage, RoomSharedState, RoomStage, ServerMessage};
 pub use socket::game_socket;
