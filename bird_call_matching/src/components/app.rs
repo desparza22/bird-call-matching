@@ -1,41 +1,47 @@
 use dioxus::prelude::*;
 
-use super::{Images, Multiplayer, Redraw, Score, Sounds, Title};
-use crate::birds::random_birds;
+use super::{OnlineGame, SoloGame, Title};
 use crate::board_state::BoardState;
+use crate::room::ClientMessage;
 
 static CSS: Asset = asset!("/assets/main.css");
+
+/// Where the board's rounds come from.
+#[derive(Clone, PartialEq, Debug)]
+enum Mode {
+    /// A private game: rounds are fetched over plain HTTP, and no websocket is opened.
+    Solo,
+    /// A shared room. Holds the create/join request that opens the connection.
+    Online(ClientMessage),
+}
 
 #[component]
 pub fn App() -> Element {
     let mut board_state = use_signal(BoardState::new);
+    let mut mode = use_signal(|| Mode::Solo);
 
-    // Writes the birds into the board before resolving, so the board is already populated on
-    // the first render that sees `Some(Ok(()))`.
-    let mut birds_resource = use_resource(move || async move {
-        let birds = random_birds(5).await?;
-        board_state.write().start_round(birds);
-        Ok::<_, ServerFnError>(())
-    });
+    let mut switch_mode = move |new_mode: Mode| {
+        board_state.write().clear_round();
+        mode.set(new_mode);
+    };
 
     rsx! {
         document::Stylesheet { href: CSS }
         main { class: "app",
             Title {}
-            match &*birds_resource.read() {
-                Some(Ok(())) => rsx! {
-                    Multiplayer {}
-                    Sounds { board_state }
-                    Images { board_state }
-                    Redraw { birds_resource, board_state }
-                    Score { board_state }
+            match mode() {
+                Mode::Solo => rsx! {
+                    SoloGame {
+                        board_state,
+                        on_join: move |first_message| switch_mode(Mode::Online(first_message)),
+                    }
                 },
-                Some(Err(e)) => rsx! {
-                    div { class: "status error", "Couldn't load birds: {e}" }
-                    button { class: "btn primary", onclick: move |_| birds_resource.restart(), "Try again" }
-                },
-                None => rsx! {
-                    div { class: "status", "Loading birds…" }
+                Mode::Online(first_message) => rsx! {
+                    OnlineGame {
+                        board_state,
+                        first_message,
+                        on_leave: move |_| switch_mode(Mode::Solo),
+                    }
                 },
             }
         }

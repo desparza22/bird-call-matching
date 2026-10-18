@@ -9,12 +9,18 @@ use super::protocol::{ClientMessage, ServerMessage};
 use {
     super::protocol::Broadcast,
     super::registry::{rooms, Membership},
+    crate::birds::{catalog, RoundSetup, BIRDS_PER_ROUND},
     dioxus::prelude::dioxus_fullstack::TypedWebsocket,
     tokio::sync::broadcast::error::RecvError,
 };
 
 #[cfg(feature = "server")]
 type GameSocket = TypedWebsocket<ClientMessage, ServerMessage>;
+
+#[cfg(feature = "server")]
+fn new_round() -> RoundSetup {
+    catalog::get().random_round(BIRDS_PER_ROUND)
+}
 
 #[get("/api/game_ws")]
 pub async fn game_socket(
@@ -81,7 +87,7 @@ fn handle_first_msg(client_msg: ClientMessage) -> Result<Membership, String> {
             player_name,
         } => rooms().join_room(room_number, player_name),
         ClientMessage::CreateRoom { player_name } => rooms().create_room(player_name),
-        ClientMessage::StartGame {} | ClientMessage::Ready {} => {
+        ClientMessage::StartGame {} | ClientMessage::SubmitGuesses { .. } => {
             Err("Unexpected message, player not in room yet.".to_string())
         }
     }
@@ -102,9 +108,11 @@ fn handle_msg(
             "Received CreateRoom message from player {player_name} but they're already in a room"
         )),
         ClientMessage::StartGame {} => {
-            rooms().update_room(room_number, |room| room.start_game(player_name))
+            rooms().update_room(room_number, |room| room.start_game(player_name, new_round))
         }
-        ClientMessage::Ready {} => rooms().update_room(room_number, |room| room.mark_ready(player_name)),
+        ClientMessage::SubmitGuesses { guesses } => rooms().update_room(room_number, |room| {
+            room.submit_guesses(player_name, &guesses, new_round)
+        }),
     }
 }
 

@@ -12,7 +12,7 @@ use rand::seq::SliceRandom;
 use rand::thread_rng;
 use serde::Deserialize;
 
-use super::Bird;
+use super::{Bird, RoundSetup};
 
 /// URL path the `public/birds` directory is served under.
 const BIRDS_URL_DIR: &str = "/birds";
@@ -104,7 +104,19 @@ impl Catalog {
         Ok(Self { birds })
     }
 
-    pub fn random_birds(&self, count: usize) -> Vec<Bird> {
+    /// Picks `count` distinct random birds, each with one random recording, and shuffles which
+    /// recording goes in which sound box.
+    pub fn random_round(&self, count: usize) -> RoundSetup {
+        let birds = self.random_birds(count);
+        let mut sound_positions: Vec<usize> = (0..birds.len()).collect();
+        sound_positions.shuffle(&mut thread_rng());
+        RoundSetup {
+            birds,
+            sound_positions,
+        }
+    }
+
+    fn random_birds(&self, count: usize) -> Vec<Bird> {
         self.birds
             .choose_multiple(&mut thread_rng(), count)
             .map(|bird| {

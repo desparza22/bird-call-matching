@@ -3,11 +3,16 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+#[cfg(feature = "server")]
+use crate::birds::count_correct;
+use crate::birds::RoundSetup;
+
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct Player {
     pub name: String,
     pub correct_guesses_per_round: Vec<u32>,
-    /// whether the player has clicked "Ready" this round
+    /// whether the player has submitted their guesses this round; also means they're ready for
+    /// the next round
     pub ready: bool,
 }
 
@@ -22,10 +27,15 @@ impl Player {
     }
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub enum RoomStage {
     Lobby,
-    Round(usize),
+    /// A round in progress. The round's setup travels with the stage, so the message announcing a
+    /// new round also tells every player exactly what to play.
+    Round {
+        number: usize,
+        setup: RoundSetup,
+    },
 }
 
 /// The room state every player keeps a copy of. The server's copy is authoritative: it applies
@@ -75,8 +85,13 @@ impl RoomSharedState {
         unique_player_name
     }
 
-    /// Moves the room from the lobby to the first round. Only the host can do this.
-    pub fn start_game(&mut self, player_name: &str) -> Result<(), String> {
+    /// Moves the room from the lobby to the first round, set up by `new_round()`. Only the host
+    /// can do this.
+    pub fn start_game(
+        &mut self,
+        player_name: &str,
+        new_round: impl FnOnce() -> RoundSetup,
+    ) -> Result<(), String> {
         if !self.is_host(player_name) {
             return Err(format!(
                 "{player_name} tried to start the game but isn't the host"
@@ -87,26 +102,51 @@ impl RoomSharedState {
                 "{player_name} tried to start a game that already started"
             ));
         }
-        self.stage = RoomStage::Round(1);
+        self.stage = RoomStage::Round {
+            number: 1,
+            setup: new_round(),
+        };
         Ok(())
     }
 
-    /// Marks the player ready. Once every player is ready, moves on to the next round and clears
-    /// everyone's ready flag.
-    pub fn mark_ready(&mut self, player_name: &str) -> Result<(), String> {
-        let RoomStage::Round(round) = self.stage else {
-            return Err(format!("{player_name} clicked ready outside of a round"));
+    /// Scores the player's guesses against this round's setup and marks them ready. Once every
+    /// player is ready, moves on to the next round, set up by `new_round()`, and clears everyone's
+    /// ready flag. `new_round` is only called if the round actually advances.
+    pub fn submit_guesses(
+        &mut self,
+        player_name: &str,
+        guesses: &[usize],
+        new_round: impl FnOnce() -> RoundSetup,
+    ) -> Result<(), String> {
+        let RoomStage::Round { number, setup } = &self.stage else {
+            return Err(format!(
+                "{player_name} submitted guesses outside of a round"
+            ));
         };
-        self.players
+        let round = *number;
+        let correct = count_correct(guesses, &setup.sound_positions);
+
+        let player = self
+            .players
             .get_mut(player_name)
-            .ok_or_else(|| format!("{player_name} isn't in room {}", self.room_number))?
-            .ready = true;
+            .ok_or_else(|| format!("{player_name} isn't in room {}", self.room_number))?;
+        if player.ready {
+            return Err(format!("{player_name} already submitted this round"));
+        }
+        *player
+            .correct_guesses_per_round
+            .get_mut(correct)
+            .ok_or_else(|| format!("{player_name} submitted too many guesses"))? += 1;
+        player.ready = true;
 
         if self.players.values().all(|player| player.ready) {
             for player in self.players.values_mut() {
                 player.ready = false;
             }
-            self.stage = RoomStage::Round(round + 1);
+            self.stage = RoomStage::Round {
+                number: round + 1,
+                setup: new_round(),
+            };
         }
         Ok(())
     }
@@ -122,7 +162,10 @@ pub enum ClientMessage {
         player_name: String,
     },
     StartGame {},
-    Ready {},
+    /// The player's guess (a bird index) for each sound box. Also marks them ready.
+    SubmitGuesses {
+        guesses: Vec<usize>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
@@ -145,6 +188,15 @@ pub enum Broadcast {
 mod tests {
     use super::*;
 
+    impl RoomStage {
+        fn round_number(&self) -> Option<usize> {
+            match self {
+                RoomStage::Lobby => None,
+                RoomStage::Round { number, .. } => Some(*number),
+            }
+        }
+    }
+
     fn room_with(names: &[&str]) -> RoomSharedState {
         let mut room = RoomSharedState::new(0, Player::new(names[0].to_string()));
         for name in &names[1..] {
@@ -156,27 +208,57 @@ mod tests {
     #[test]
     fn only_the_host_can_start_the_game() {
         let mut room = room_with(&["alice", "bob"]);
-        assert!(room.start_game("bob").is_err());
+        assert!(room.start_game("bob", RoundSetup::default).is_err());
         assert_eq!(room.stage, RoomStage::Lobby);
 
-        room.start_game("alice").unwrap();
-        assert_eq!(room.stage, RoomStage::Round(1));
-        assert!(room.start_game("alice").is_err());
+        room.start_game("alice", RoundSetup::default).unwrap();
+        assert_eq!(room.stage.round_number(), Some(1));
+        assert!(room.start_game("alice", RoundSetup::default).is_err());
     }
 
     #[test]
     fn round_advances_once_everyone_is_ready() {
         let mut room = room_with(&["alice", "bob"]);
-        assert!(room.mark_ready("alice").is_err(), "can't ready up in the lobby");
-        room.start_game("alice").unwrap();
+        let no_new_round = || -> RoundSetup { panic!("round advanced too early") };
+        assert!(
+            room.submit_guesses("alice", &[0, 1, 2], no_new_round)
+                .is_err(),
+            "can't submit in the lobby"
+        );
+        room.start_game("alice", RoundSetup::default).unwrap();
 
-        room.mark_ready("alice").unwrap();
-        assert_eq!(room.stage, RoomStage::Round(1));
+        room.submit_guesses("alice", &[0, 1, 2], no_new_round)
+            .unwrap();
+        assert_eq!(room.stage.round_number(), Some(1));
         assert!(room.players["alice"].ready);
+        assert!(
+            room.submit_guesses("alice", &[0, 1, 2], no_new_round)
+                .is_err(),
+            "can't submit twice in one round"
+        );
 
-        room.mark_ready("bob").unwrap();
-        assert_eq!(room.stage, RoomStage::Round(2));
+        room.submit_guesses("bob", &[0, 1, 2], RoundSetup::default)
+            .unwrap();
+        assert_eq!(room.stage.round_number(), Some(2));
         assert!(room.players.values().all(|player| !player.ready));
+    }
+
+    #[test]
+    fn submitted_guesses_are_scored_against_the_round() {
+        let mut room = room_with(&["alice", "bob"]);
+        let setup = || RoundSetup {
+            birds: Vec::new(),
+            sound_positions: vec![2, 0, 1, 4, 3],
+        };
+        room.start_game("alice", setup).unwrap();
+
+        room.submit_guesses("alice", &[2, 0, 4], setup).unwrap();
+        room.submit_guesses("bob", &[2, 0, 1], setup).unwrap();
+        assert_eq!(
+            room.players["alice"].correct_guesses_per_round,
+            [0, 0, 1, 0]
+        );
+        assert_eq!(room.players["bob"].correct_guesses_per_round, [0, 0, 0, 1]);
     }
 
     #[test]
