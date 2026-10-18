@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use super::{GameBoard, LeaderboardEntry, RoomForms};
+use super::{GameBoard, GameLayout, Leaderboard, LeaderboardEntry, RoomForms};
 use crate::birds::{random_round, BIRDS_PER_ROUND};
 use crate::board_state::BoardState;
 use crate::room::ClientMessage;
@@ -29,24 +29,27 @@ pub fn SoloGame(
     // render, so this doesn't refetch on every re-render.
     use_hook(load_next_round);
 
+    let leaderboard = vec![LeaderboardEntry {
+        name: None,
+        correct_guesses_per_round: board_state.read().correct_guesses_per_round.clone(),
+        is_current_player: true,
+    }];
+
     rsx! {
-        RoomForms { on_join }
-        if let Some(err) = load_error() {
-            div { class: "status error", "Couldn't load birds: {err}" }
-            button { class: "btn primary", onclick: move |_| load_next_round(), "Try again" }
-        }
-        if board_state.read().has_round() {
-            GameBoard {
-                board_state,
-                on_submit: move |_| load_next_round(),
-                leaderboard: vec![LeaderboardEntry {
-                    name: None,
-                    correct_guesses_per_round: board_state.read().correct_guesses_per_round.clone(),
-                    is_current_player: true,
-                }],
+        GameLayout {
+            sidebar: rsx! {
+                RoomForms { on_join }
+                Leaderboard { entries: leaderboard }
+            },
+            if let Some(err) = load_error() {
+                div { class: "status error", "Couldn't load birds: {err}" }
+                button { class: "btn primary", onclick: move |_| load_next_round(), "Try again" }
             }
-        } else if load_error.read().is_none() {
-            div { class: "status", "Loading birds…" }
+            if board_state.read().has_round() {
+                GameBoard { board_state, on_submit: move |_| load_next_round() }
+            } else if load_error.read().is_none() {
+                div { class: "status", "Loading birds…" }
+            }
         }
     }
 }

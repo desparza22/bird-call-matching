@@ -1,17 +1,26 @@
-@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=Figtree:wght@400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Figtree:wght@400;500;600&display=swap");
 
+/* Colors sampled from a sunlit spruce forest: deep needle shade, bark, the dry forest floor,
+   pale light filtering through the canopy, and the gold of a few autumn leaves. */
 :root {
-    --pond: #0e1c1e;
-    --reed: #162a2c;
-    --reed-edge: #28423f;
-    --mist: #dbe6de;
-    --mist-dim: #8fa6a0;
-    --finch: #f2c230;
-    --kingfisher: #3cc4bd;
-    --hit: #7bd88f;
-    --miss: #f08a6c;
+    --shade: #141c16;
+    --needle: #233024;
+    --moss: #3d4a35;
+    --bark: #3a2d23;
+    --floor: #5b4532;
+    --sunlight: #f2e9c9;
+    --haze: #c9cdb8;
+    --haze-dim: #9a9c86;
+    --leaf-gold: #d9a441;
+    --leaf-gold-bright: #e8b955;
+    --hit: #a3c46c;
+    --miss: #d9774f;
 
-    --display: "Bricolage Grotesque", "Avenir Next", "Trebuchet MS", sans-serif;
+    --panel: rgba(18, 25, 19, 0.66);
+    --panel-edge: rgba(242, 233, 201, 0.1);
+    --panel-edge-strong: rgba(242, 233, 201, 0.22);
+
+    --display: "Fraunces", Georgia, "Times New Roman", serif;
     --body: "Figtree", "Segoe UI", system-ui, sans-serif;
 }
 
@@ -21,131 +30,339 @@
     box-sizing: border-box;
 }
 
+html {
+    height: 100%;
+}
+
+/* The page is the forest: light breaking through the canopy at the top, a few dark trunks, and
+   the brown forest floor underfoot. */
 body {
+    min-height: 100%;
     margin: 0;
-    background: var(--pond);
-    color: var(--mist);
+    color: var(--sunlight);
     font-family: var(--body);
-    line-height: 1.5;
+    font-size: 15px;
+    line-height: 1.45;
+    background-color: var(--shade);
+    background-image:
+        /* sun glow high in the canopy */
+        radial-gradient(ellipse 70% 45% at 72% -8%, rgba(242, 233, 201, 0.38), transparent 70%),
+        /* slanted light shafts */
+        repeating-linear-gradient(
+            102deg,
+            transparent 0 160px,
+            rgba(242, 233, 201, 0.035) 160px 230px,
+            transparent 230px 420px
+        ),
+        /* the canopy, which the trunks fade up into */
+        linear-gradient(180deg, #2c3a2c 0%, rgba(35, 48, 36, 0.7) 22%, transparent 55%),
+        /* trunks: two patterns with unrelated widths, so the spacing never looks regular */
+        repeating-linear-gradient(
+            90deg,
+            transparent 0 233px,
+            rgba(12, 9, 7, 0.3) 233px 247px,
+            transparent 247px 389px
+        ),
+        repeating-linear-gradient(
+            90deg,
+            transparent 0 101px,
+            rgba(12, 9, 7, 0.18) 101px 107px,
+            transparent 107px 571px
+        ),
+        /* canopy to forest floor */
+        linear-gradient(
+            180deg,
+            #2c3a2c 0%,
+            var(--needle) 30%,
+            #1c2419 62%,
+            var(--bark) 86%,
+            var(--floor) 100%
+        );
+    background-attachment: fixed;
 }
 
 :focus-visible {
-    outline: 3px solid var(--finch);
-    outline-offset: 3px;
+    outline: 2px solid var(--leaf-gold);
+    outline-offset: 2px;
 }
 
-/* Layout */
+/* Layout: sidebar beside the board, sized to fit a laptop screen without scrolling */
 
 .app {
     display: grid;
-    gap: 32px;
-    max-width: 1080px;
+    grid-template-columns: 290px minmax(0, 1fr);
+    align-items: start;
+    gap: 20px;
+    max-width: 1320px;
+    min-height: 100vh;
     margin: 0 auto;
-    padding: 32px 20px 64px;
+    padding: 20px;
+}
+
+.sidebar,
+.board {
+    display: grid;
+    /* `minmax(0, …)` lets the column shrink below its content's default width (e.g. inputs) */
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    gap: 14px;
+}
+
+.panel,
+.board > section {
+    padding: 14px 16px;
+    border: 1px solid var(--panel-edge);
+    border-radius: 14px;
+    background: var(--panel);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+}
+
+/* Title */
+
+.masthead {
+    padding: 4px 4px 2px;
 }
 
 .masthead h1 {
     margin: 0;
     font-family: var(--display);
-    font-weight: 800;
-    font-size: clamp(2.5rem, 7vw, 4.5rem);
-    letter-spacing: -0.03em;
+    font-weight: 700;
+    font-size: 2.4rem;
+    letter-spacing: -0.02em;
     line-height: 1;
+    text-shadow: 0 2px 18px rgba(0, 0, 0, 0.35);
 }
 
 .lede {
-    max-width: 46ch;
-    margin: 12px 0 0;
-    color: var(--mist-dim);
+    margin: 6px 0 0;
+    color: var(--haze);
+    font-size: 0.92rem;
 }
 
 .panel-title {
-    margin: 0 0 12px;
+    margin: 0 0 10px;
     font-family: var(--display);
-    font-weight: 600;
-    font-size: 1.25rem;
+    font-weight: 500;
+    font-size: 1.1rem;
+    letter-spacing: 0.01em;
 }
 
 .status {
-    color: var(--mist-dim);
+    color: var(--haze);
 }
 
 .status.error {
     color: var(--miss);
 }
 
-/* Buttons */
+.status.waiting {
+    padding: 40px 16px;
+    border: 1px dashed var(--panel-edge-strong);
+    border-radius: 14px;
+    text-align: center;
+}
+
+.hint {
+    margin: 0;
+    color: var(--haze-dim);
+}
+
+/* Buttons and inputs */
 
 .btn {
-    padding: 8px 18px;
-    border: 2px solid var(--reed-edge);
+    padding: 6px 14px;
+    border: 1px solid var(--panel-edge-strong);
     border-radius: 999px;
-    background: transparent;
-    color: var(--mist);
+    background: rgba(242, 233, 201, 0.06);
+    color: var(--sunlight);
     font: inherit;
     font-weight: 600;
+    white-space: nowrap;
     cursor: pointer;
     transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
 .btn:hover {
-    border-color: var(--mist-dim);
+    border-color: var(--haze);
+    background: rgba(242, 233, 201, 0.12);
 }
 
 .btn.primary {
-    border-color: var(--finch);
-    background: var(--finch);
-    color: #1a1500;
+    border-color: var(--leaf-gold);
+    background: var(--leaf-gold);
+    color: #241a0c;
 }
 
 .btn.primary:hover {
-    border-color: #ffd24d;
-    background: #ffd24d;
+    border-color: var(--leaf-gold-bright);
+    background: var(--leaf-gold-bright);
 }
 
 .btn.listen {
     justify-self: start;
-    border-color: var(--kingfisher);
-    color: var(--kingfisher);
 }
 
-.btn.listen:hover {
-    border-color: var(--kingfisher);
-    background: rgba(60, 196, 189, 0.12);
+.room-form {
+    display: flex;
+    gap: 6px;
+}
+
+.room-form + .room-form {
+    margin-top: 8px;
+}
+
+.room-form input {
+    flex: 1;
+    min-width: 0;
+    padding: 6px 10px;
+    border: 1px solid var(--panel-edge-strong);
+    border-radius: 8px;
+    background: rgba(10, 14, 11, 0.55);
+    color: var(--sunlight);
+    font: inherit;
+}
+
+.room-form input::placeholder {
+    color: var(--haze-dim);
+}
+
+.room-form input.room-number {
+    flex: 0 0 72px;
+}
+
+/* Room status */
+
+.room-meta {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.tag {
+    padding: 1px 10px;
+    border-radius: 999px;
+    background: rgba(217, 164, 65, 0.18);
+    color: var(--leaf-gold-bright);
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.players {
+    display: grid;
+    gap: 4px;
+    margin: 0 0 10px;
+    padding: 0;
+    list-style: none;
+}
+
+.players li {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.player-status {
+    color: var(--haze-dim);
+    font-size: 0.88rem;
+}
+
+.players li.ready .player-status {
+    color: var(--hit);
+}
+
+/* Leaderboard */
+
+.leaderboard {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+}
+
+.leaderboard th,
+.leaderboard td {
+    padding: 4px 4px;
+    text-align: center;
+}
+
+.leaderboard th {
+    font-size: 1.15rem;
+    font-weight: 400;
+}
+
+.leaderboard th:first-child,
+.leaderboard td:first-child {
+    text-align: left;
+}
+
+.leaderboard th.label {
+    color: var(--haze);
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.leaderboard td.total {
+    font-weight: 700;
+}
+
+.leaderboard td:first-child {
+    max-width: 110px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.leaderboard tbody tr {
+    border-top: 1px solid var(--panel-edge);
+}
+
+/* The current player's row catches the light. */
+.leaderboard tr.you {
+    background: rgba(217, 164, 65, 0.16);
+    color: var(--leaf-gold-bright);
+    font-weight: 700;
 }
 
 /* Sound cards */
 
 .card-row {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 16px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
 }
 
 .sound-card {
     display: grid;
     align-content: start;
-    gap: 12px;
-    padding: 16px;
-    border: 2px solid var(--reed-edge);
-    border-radius: 18px;
-    background: var(--reed);
+    gap: 8px;
+    padding: 12px;
+    border: 1px solid var(--panel-edge);
+    border-radius: 12px;
+    background: rgba(242, 233, 201, 0.04);
     cursor: pointer;
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
+.sound-card:hover {
+    border-color: var(--panel-edge-strong);
+}
+
 .sound-card.selected {
-    border-color: var(--finch);
+    border-color: var(--leaf-gold);
+    box-shadow: 0 0 0 3px rgba(217, 164, 65, 0.22);
 }
 
 .sound-card.playing {
-    box-shadow: 0 0 0 4px rgba(60, 196, 189, 0.18);
+    background: rgba(163, 196, 108, 0.08);
 }
 
 .sound-label {
     font-family: var(--display);
-    font-weight: 600;
-    font-size: 1.05rem;
+    font-weight: 500;
+    font-size: 1rem;
 }
 
 /* The bars stand in for a sonogram: still at rest, moving while a call plays */
@@ -154,15 +371,15 @@ body {
     display: flex;
     align-items: center;
     gap: 4px;
-    height: 36px;
+    height: 26px;
 }
 
 .wave span {
     flex: 1;
-    max-width: 10px;
+    max-width: 8px;
     height: 40%;
-    border-radius: 4px;
-    background: var(--mist-dim);
+    border-radius: 3px;
+    background: var(--haze-dim);
 }
 
 .wave span:nth-child(1) { height: 35%; }
@@ -174,7 +391,7 @@ body {
 .wave span:nth-child(7) { height: 40%; }
 
 .playing .wave span {
-    background: var(--kingfisher);
+    background: var(--hit);
     animation: pulse 0.8s ease-in-out infinite alternate;
 }
 
@@ -191,12 +408,13 @@ body {
 }
 
 .guess {
-    color: var(--mist-dim);
-    font-size: 0.95rem;
+    color: var(--haze);
+    font-size: 0.9rem;
 }
 
 .result {
     font-weight: 600;
+    font-size: 0.92rem;
 }
 
 .result.correct {
@@ -212,62 +430,66 @@ body {
 .votes {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 6px;
 }
 
 .vote-btn,
 .vote-count {
-    padding: 4px 12px;
-    border: 2px solid transparent;
+    padding: 1px 10px;
+    border: 1px solid transparent;
     border-radius: 999px;
     font: inherit;
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     font-variant-numeric: tabular-nums;
 }
 
 .vote-btn {
-    border-color: var(--reed-edge);
+    border-color: var(--panel-edge-strong);
     background: transparent;
-    color: var(--mist);
+    color: var(--sunlight);
     cursor: pointer;
 }
 
 .vote-btn:hover {
-    border-color: var(--finch);
+    border-color: var(--leaf-gold);
 }
 
 .vote-count {
-    color: var(--mist-dim);
+    color: var(--haze-dim);
 }
 
 /* Bird photos */
 
 .pictures {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-    gap: 14px;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 10px;
 }
 
 .photo {
     display: grid;
-    gap: 8px;
-    padding: 8px;
-    border: 2px solid transparent;
+    gap: 6px;
+    padding: 6px;
+    border: 1px solid transparent;
     border-radius: 12px;
-    background: var(--reed);
+    background: rgba(242, 233, 201, 0.04);
+    transition: border-color 0.15s ease, transform 0.15s ease;
 }
 
 .photo img {
     display: block;
     width: 100%;
     aspect-ratio: 4 / 3;
+    max-height: 28vh;
     object-fit: cover;
-    border-radius: 6px;
+    border-radius: 8px;
 }
 
 .photo .name {
-    padding: 0 4px 4px;
+    padding: 0 2px 2px;
+    font-size: 0.88rem;
     font-weight: 500;
+    line-height: 1.25;
 }
 
 /* Photos only react once a call has been picked */
@@ -277,57 +499,38 @@ body {
 }
 
 .pictures.armed .photo:hover {
-    border-color: var(--finch);
+    border-color: var(--leaf-gold);
+    transform: translateY(-2px);
 }
 
-/* Actions and score */
+/* Submit / next round */
 
 .actions {
     display: flex;
     align-items: center;
-    gap: 16px;
-    min-height: 44px;
+    gap: 14px;
+    min-height: 38px;
+    padding: 0 4px;
 }
 
-.hint {
-    color: var(--mist-dim);
-}
+/* Narrow screens: stack the sidebar above the board */
 
-.score-grid {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 12px;
-    max-width: 560px;
-}
+@media (max-width: 900px) {
+    .app {
+        grid-template-columns: minmax(0, 1fr);
+        padding: 16px;
+    }
 
-.score-tile {
-    display: grid;
-    justify-items: start;
-    gap: 2px;
-    padding: 12px 14px;
-    border-left: 3px solid var(--reed-edge);
-}
+    .card-row {
+        grid-template-columns: minmax(0, 1fr);
+    }
 
-.score-emoji {
-    font-size: 1.5rem;
-}
+    .pictures {
+        grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    }
 
-.score-count {
-    font-family: var(--display);
-    font-weight: 800;
-    font-size: 1.75rem;
-    line-height: 1.1;
-    font-variant-numeric: tabular-nums;
-}
-
-.score-label {
-    color: var(--mist-dim);
-    font-size: 0.85rem;
-}
-
-@media (max-width: 520px) {
-    .score-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+    .photo img {
+        max-height: none;
     }
 }
 
@@ -337,7 +540,8 @@ body {
     }
 
     .btn,
-    .sound-card {
+    .sound-card,
+    .photo {
         transition: none;
     }
 }

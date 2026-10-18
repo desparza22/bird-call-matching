@@ -2,7 +2,7 @@ use dioxus::logger::tracing::error;
 use dioxus::prelude::dioxus_fullstack::{use_websocket, WebSocketOptions};
 use dioxus::prelude::*;
 
-use super::{GameBoard, LeaderboardEntry};
+use super::{GameBoard, GameLayout, Leaderboard, LeaderboardEntry};
 use crate::board_state::BoardState;
 use crate::room::{game_socket, ClientMessage, RoomSharedState, RoomStage, ServerMessage};
 
@@ -69,75 +69,112 @@ pub fn OnlineGame(
 
     if disconnected() {
         return rsx! {
-            div { class: "status error", "Lost connection to the room." }
-            button { class: "btn primary", onclick: move |_| on_leave.call(()), "Back to solo play" }
+            GameLayout {
+                sidebar: rsx! {
+                    section { class: "panel",
+                        div { class: "status error", "Lost connection to the room." }
+                        button { class: "btn primary", onclick: move |_| on_leave.call(()), "Back to solo play" }
+                    }
+                },
+            }
         };
     }
 
+    let joined_room = joined_room.read();
+    let Some(JoinedRoom { player_name, room }) = &*joined_room else {
+        return rsx! {
+            GameLayout {
+                sidebar: rsx! {
+                    section { class: "panel",
+                        div { class: "status", "Connecting…" }
+                    }
+                },
+            }
+        };
+    };
+    let leaderboard: Vec<LeaderboardEntry> = room
+        .players
+        .values()
+        .map(|player| LeaderboardEntry {
+            name: Some(player.name.clone()),
+            correct_guesses_per_round: player.correct_guesses_per_round.clone(),
+            is_current_player: player.name == *player_name,
+        })
+        .collect();
+
     rsx! {
-        match &*joined_room.read() {
-            None => rsx! {
-                div { class: "status", "Connecting…" }
-            },
-            Some(JoinedRoom { player_name, room }) => rsx! {
+        GameLayout {
+            sidebar: rsx! {
                 RoomView {
                     player_name: player_name.clone(),
                     room: room.clone(),
                     on_start_game: move |_| send(ClientMessage::StartGame {}),
                 }
-                if board_state.read().has_round() {
-                    GameBoard {
-                        board_state,
-                        on_submit: move |guesses| send(ClientMessage::SubmitGuesses { guesses }),
-                        leaderboard: room
-                            .players
-                            .values()
-                            .map(|player| LeaderboardEntry {
-                                name: Some(player.name.clone()),
-                                correct_guesses_per_round: player.correct_guesses_per_round.clone(),
-                                is_current_player: player.name == *player_name,
-                            })
-                            .collect::<Vec<_>>(),
-                    }
-                }
+                Leaderboard { entries: leaderboard }
             },
+            if board_state.read().has_round() {
+                GameBoard {
+                    board_state,
+                    on_submit: move |guesses| send(ClientMessage::SubmitGuesses { guesses }),
+                }
+            } else {
+                div { class: "status waiting", "The round starts once the host starts the game." }
+            }
         }
     }
 }
 
-/// The room's players and stage.
+/// The room's number, stage and players.
 #[component]
 fn RoomView(player_name: String, room: RoomSharedState, on_start_game: EventHandler) -> Element {
-    let room_number = room.room_number;
+    let round = match room.stage {
+        RoomStage::Lobby => None,
+        RoomStage::Round { number, .. } => Some(number),
+    };
 
     rsx! {
-        p { "Joined {room_number} as {player_name}" }
-        match room.stage {
-            RoomStage::Lobby => rsx! {
-                for name in room.players.keys() {
-                    div { key: "{name}",
-                        p { "Player: {name}" }
-                    }
+        section { class: "panel room",
+            div { class: "room-meta",
+                h2 { class: "panel-title", "Room {room.room_number}" }
+                match round {
+                    Some(number) => rsx! {
+                        span { class: "tag", "Round {number}" }
+                    },
+                    None => rsx! {
+                        span { class: "tag", "Lobby" }
+                    },
                 }
-                if room.is_host(&player_name) {
-                    button { onclick: move |_| on_start_game.call(()), "Start game" }
-                } else {
-                    p { "Waiting for host..." }
-                }
-            },
-            RoomStage::Round { number, .. } => rsx! {
-                p { "Round {number}" }
+            }
+            ul { class: "players",
                 for (name, player) in room.players.iter() {
-                    div { key: "{name}",
-                        p {
-                            "Player: {name}"
-                            if player.ready {
-                                " ✓ ready"
+                    li {
+                        key: "{name}",
+                        class: if round.is_some() && player.ready { "ready" },
+                        span { class: "player-name",
+                            "{name}"
+                            if *name == player_name {
+                                " (you)"
+                            }
+                        }
+                        if round.is_some() {
+                            span { class: "player-status",
+                                if player.ready {
+                                    "✓ ready"
+                                } else {
+                                    "guessing…"
+                                }
                             }
                         }
                     }
                 }
-            },
+            }
+            if round.is_none() {
+                if room.is_host(&player_name) {
+                    button { class: "btn primary", onclick: move |_| on_start_game.call(()), "Start game" }
+                } else {
+                    p { class: "hint", "Waiting for host..." }
+                }
+            }
         }
     }
 }

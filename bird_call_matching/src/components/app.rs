@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use super::{OnlineGame, SoloGame, Title};
+use super::{OnlineGame, SoloGame};
 use crate::board_state::BoardState;
 use crate::room::ClientMessage;
 
@@ -28,7 +28,6 @@ pub fn App() -> Element {
     rsx! {
         document::Stylesheet { href: CSS }
         main { class: "app",
-            Title {}
             match mode() {
                 Mode::Solo => rsx! {
                     SoloGame {

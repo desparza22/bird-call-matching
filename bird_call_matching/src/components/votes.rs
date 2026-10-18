@@ -16,6 +16,7 @@ pub fn Votes(recording_id: ReadSignal<String>) -> Element {
     let mut num_downvotes = use_signal(|| 0);
 
     rsx! {
+        div { class: "votes",
         match &*ratings_resource.read() {
             Some(Ok((upvotes, downvotes))) => {
                 num_upvotes.set(*upvotes);
@@ -36,11 +37,12 @@ pub fn Votes(recording_id: ReadSignal<String>) -> Element {
                 }
             }
             Some(Err(_)) => rsx! {
-                div { "Failed to fetch votes" }
+                div { class: "vote-count", "Failed to fetch votes" }
             },
             None => rsx! {
-                div { "Loading votes..." }
+                div { class: "vote-count", "Loading votes..." }
             },
+        }
         }
     }
 }
@@ -72,9 +74,10 @@ fn DirectionalVote(
 
     rsx! {
         if user_voted_either_direction() {
-            div { "{vote_text(num_votes)}" }
+            div { class: "vote-count", "{vote_text(num_votes)}" }
         } else {
             button {
+                class: "vote-btn",
                 onclick: move |_| {
                     spawn(async move {
                         if vote_sound(recording_id(), is_upvote).await.is_ok() {

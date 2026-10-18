@@ -33,18 +33,18 @@ pub fn Leaderboard(mut entries: Vec<LeaderboardEntry>) -> Element {
     let show_names = entries.iter().any(|entry| entry.name.is_some());
 
     rsx! {
-        section {
+        section { class: "panel",
             h2 { class: "panel-title", "Leaderboard" }
             table { class: "leaderboard",
                 thead {
                     tr {
                         if show_names {
-                            th { "Player" }
+                            th { class: "label", "Player" }
                         }
                         for (correct, emoji) in TIERS.iter().enumerate() {
                             th { key: "{correct}", title: "{correct} correct", "{emoji}" }
                         }
-                        th { "Total" }
+                        th { class: "label total", "Total" }
                     }
                 }
                 tbody {
@@ -52,7 +52,6 @@ pub fn Leaderboard(mut entries: Vec<LeaderboardEntry>) -> Element {
                         tr {
                             key: "{entry.name.as_deref().unwrap_or_default()}",
                             class: if entry.is_current_player { "you" },
-                            font_weight: if entry.is_current_player { "bold" },
                             if let Some(name) = &entry.name {
                                 td {
                                     "{name}"
@@ -64,7 +63,7 @@ pub fn Leaderboard(mut entries: Vec<LeaderboardEntry>) -> Element {
                             for (correct, rounds) in entry.correct_guesses_per_round.iter().enumerate() {
                                 td { key: "{correct}", "{rounds}" }
                             }
-                            td { "{entry.total_correct()}" }
+                            td { class: "total", "{entry.total_correct()}" }
                         }
                     }
                 }

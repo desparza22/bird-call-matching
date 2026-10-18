@@ -5,6 +5,7 @@
 mod app;
 mod game_board;
 mod images;
+mod layout;
 mod leaderboard;
 mod online;
 mod redraw;
@@ -17,6 +18,7 @@ mod votes;
 pub use app::App;
 use game_board::GameBoard;
 use images::Images;
+use layout::GameLayout;
 use leaderboard::{Leaderboard, LeaderboardEntry};
 use online::OnlineGame;
 use redraw::Redraw;
