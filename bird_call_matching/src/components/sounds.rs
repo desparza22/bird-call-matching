@@ -9,24 +9,38 @@ pub fn Sounds(mut board_state: Signal<BoardState>) -> Element {
     let audio_element_id = |id: usize| format!("sound{id}-id");
 
     let mut do_select = move |id| board_state.write().selected_sound = Some(id);
-    let do_listen = move |id| {
+    let do_toggle_play = move |id| {
         let element_id = audio_element_id(id);
         spawn(async move {
-            playing.write()[id] = true;
-            let js = format!(
-                "const el = document.getElementById('{element_id}');
+            let id_is_playing = playing.read()[id];
+            match id_is_playing {
+                false => {
+                    playing.write()[id] = true;
+                    let js = format!(
+                        "const el = document.getElementById('{element_id}');
                  el.play();
                  await new Promise(resolve => {{ el.onended = resolve; }});"
-            );
-            let _ = document::eval(&js).await;
-            playing.write()[id] = false;
+                    );
+                    let _ = document::eval(&js).await;
+                    playing.write()[id] = false;
+                }
+                true => {
+                    let js = format!(
+                        "const el = document.getElementById('{element_id}');
+                 el.pause();
+                 el.curretTime = 0;"
+                    );
+                    let _ = document::eval(&js).await;
+                    playing.write()[id] = false;
+                }
+            }
         });
     };
     let select = |id| move |_| do_select(id);
-    let listen_and_select = |id: usize| {
+    let select_and_toggle_play = |id: usize| {
         move |_| {
             do_select(id);
-            do_listen(id)
+            do_toggle_play(id)
         }
     };
 
@@ -62,7 +76,7 @@ pub fn Sounds(mut board_state: Signal<BoardState>) -> Element {
                         }
                         button {
                             class: "btn listen",
-                            onclick: listen_and_select(audio_box),
+                            onclick: select_and_toggle_play(audio_box),
                             "▶ Listen"
                         }
                         Votes { recording_id: board.recording_for_box(audio_box).id.clone() }

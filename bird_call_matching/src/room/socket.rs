@@ -59,16 +59,17 @@ async fn handle_connection(mut socket: GameSocket) {
     loop {
         tokio::select! {
             client_msg = socket.recv() => {
-                let client_msg = match client_msg {
-                    Ok(client_msg) => client_msg,
+                let (client_msg, disconnect) = match client_msg {
+                    Ok(client_msg) => (Some(client_msg), false),
                     Err(err) => {
                         println!("{player_name} disconnected: {err}");
-                        break;
+                        (None, true)
                     }
                 };
                 if let Err(err) = handle_msg(client_msg, room_number, &player_name) {
                     println!("rejected message: {err}");
                 }
+                if disconnect {break};
             },
 
             broadcast = receiver.recv() => {
@@ -96,21 +97,24 @@ fn handle_first_msg(client_msg: ClientMessage) -> Result<Membership, String> {
 /// Handles a message from a player who's already in `room_number`.
 #[cfg(feature = "server")]
 fn handle_msg(
-    client_msg: ClientMessage,
+    client_msg: Option<ClientMessage>,
     room_number: usize,
     player_name: &str,
 ) -> Result<(), String> {
     match client_msg {
-        ClientMessage::JoinRoom { room_number, .. } => Err(format!(
+        Some(ClientMessage::JoinRoom { room_number, .. }) => Err(format!(
             "Received JoinRoom message from player {player_name}, for room {room_number}, but they're already in a room"
         )),
-        ClientMessage::CreateRoom { .. } => Err(format!(
+        Some(ClientMessage::CreateRoom { .. }) => Err(format!(
             "Received CreateRoom message from player {player_name} but they're already in a room"
         )),
-        ClientMessage::StartGame {} => {
+        None => {
+            rooms().disconnect_player(room_number, player_name)
+        }
+        Some(ClientMessage::StartGame {}) => {
             rooms().update_room(room_number, |room| room.start_game(player_name, new_round))
         }
-        ClientMessage::SubmitGuesses { guesses } => rooms().update_room(room_number, |room| {
+        Some(ClientMessage::SubmitGuesses { guesses }) => rooms().update_room(room_number, |room| {
             room.submit_guesses(player_name, &guesses, new_round)
         }),
     }

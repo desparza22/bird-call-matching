@@ -248,6 +248,10 @@ body {
     color: var(--hit);
 }
 
+.players li.disconnected .player-status {
+    color: var(--miss);
+}
+
 /* Leaderboard */
 
 .leaderboard {

@@ -48,3 +48,29 @@ To run for a different platform, use the `--platform platform` flag. E.g.
 dx serve --platform desktop
 ```
 
+Deno also installs a command named `dx`. If `dx serve` prints npm downloads instead of building
+the app, the Deno one is first on your `PATH`; run the Dioxus CLI as `~/.cargo/bin/dx` instead.
+
+### Playing over the internet
+
+`serve-public.sh` builds a release bundle, runs the game server on this machine
+(`127.0.0.1:8090`), and opens an [ngrok](https://ngrok.com) tunnel to it:
+
+```bash
+./serve-public.sh
+```
+
+Share the `https://….ngrok-free.app` URL that ngrok prints. Press Ctrl+C to stop both the tunnel
+and the game server.
+
+- No router or firewall changes are needed. ngrok connects outward from this machine, so nothing
+  has to be let in. (Port forwarding is only needed to let players reach this machine directly,
+  without a tunnel.)
+- The release build is much smaller than `dx serve`'s debug build (about 2.6 MB of wasm instead of
+  60 MB), so it loads quickly for remote players. Building takes a few minutes; rerun the last
+  build with `./serve-public.sh --skip-build`.
+- On a free ngrok account the URL changes each run unless you use your account's free static
+  domain: `NGROK_URL=your-name.ngrok-free.app ./serve-public.sh`. Free accounts also show visitors
+  a one-time ngrok warning page before the game.
+- Rooms live in the server's memory, so restarting it ends any games in progress.
+

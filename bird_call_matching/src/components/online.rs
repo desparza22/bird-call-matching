@@ -4,7 +4,10 @@ use dioxus::prelude::*;
 
 use super::{GameBoard, GameLayout, Leaderboard, LeaderboardEntry};
 use crate::board_state::BoardState;
-use crate::room::{game_socket, ClientMessage, RoomSharedState, RoomStage, ServerMessage};
+use crate::room::{
+    game_socket, ClientMessage, Player, PlayerConnectedState, PlayerState, RoomSharedState,
+    RoomStage, ServerMessage,
+};
 
 /// What this client knows about the room it's in.
 #[derive(Clone, PartialEq, Debug)]
@@ -132,6 +135,22 @@ fn RoomView(player_name: String, room: RoomSharedState, on_start_game: EventHand
         RoomStage::Round { number, .. } => Some(number),
     };
 
+    let player_class = |player: &Player| -> Option<&str> {
+        match player.player_state {
+            PlayerState::Disconnected => Some("disconnected"),
+            PlayerState::Connected(PlayerConnectedState { ready: true }) => Some("ready"),
+            PlayerState::Connected(PlayerConnectedState { ready: false }) => None,
+        }
+    };
+
+    let player_text = |player: &Player| -> &str {
+        match player.player_state {
+            PlayerState::Disconnected => "disconnected",
+            PlayerState::Connected(PlayerConnectedState { ready: true }) => "✓ ready",
+            PlayerState::Connected(PlayerConnectedState { ready: false }) => "guessing...",
+        }
+    };
+
     rsx! {
         section { class: "panel room",
             div { class: "room-meta",
@@ -149,7 +168,7 @@ fn RoomView(player_name: String, room: RoomSharedState, on_start_game: EventHand
                 for (name, player) in room.players.iter() {
                     li {
                         key: "{name}",
-                        class: if round.is_some() && player.ready { "ready" },
+                        class: player_class(player),
                         span { class: "player-name",
                             "{name}"
                             if *name == player_name {
@@ -158,11 +177,7 @@ fn RoomView(player_name: String, room: RoomSharedState, on_start_game: EventHand
                         }
                         if round.is_some() {
                             span { class: "player-status",
-                                if player.ready {
-                                    "✓ ready"
-                                } else {
-                                    "guessing…"
-                                }
+                                "{player_text(player)}"
                             }
                         }
                     }

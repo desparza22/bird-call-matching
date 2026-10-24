@@ -105,6 +105,18 @@ impl Rooms {
         })
     }
 
+    pub fn disconnect_player(
+        &mut self,
+        room_number: usize,
+        player_name: &str,
+    ) -> Result<(), String> {
+        self.bind_room(room_number, |room_handle| {
+            room_handle
+                .room_shared_state
+                .mark_player_disconnected(player_name)
+        })
+    }
+
     fn map_room<A>(
         &mut self,
         room_number: usize,

@@ -3,7 +3,7 @@
 [web.app]
 
 # HTML title tag content
-title = "bird_call_matching"
+title = "Go Birdy"
 
 # include `assets` in web platform
 [web.resource]

@@ -11,9 +11,20 @@ use crate::birds::RoundSetup;
 pub struct Player {
     pub name: String,
     pub correct_guesses_per_round: Vec<u32>,
+    pub player_state: PlayerState,
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub struct PlayerConnectedState {
     /// whether the player has submitted their guesses this round; also means they're ready for
     /// the next round
     pub ready: bool,
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub enum PlayerState {
+    Disconnected,
+    Connected(PlayerConnectedState),
 }
 
 #[cfg(feature = "server")]
@@ -22,7 +33,28 @@ impl Player {
         Self {
             name,
             correct_guesses_per_round: vec![0; 4],
-            ready: false,
+            player_state: PlayerState::Connected(PlayerConnectedState { ready: false }),
+        }
+    }
+
+    pub fn ready(&self) -> bool {
+        match self.player_state {
+            PlayerState::Disconnected => false,
+            PlayerState::Connected(PlayerConnectedState { ready }) => ready,
+        }
+    }
+
+    pub fn disconnected(&self) -> bool {
+        match self.player_state {
+            PlayerState::Disconnected => true,
+            PlayerState::Connected(_) => false,
+        }
+    }
+
+    pub fn set_ready_if_connected(&mut self, ready: bool) -> () {
+        match &mut self.player_state {
+            PlayerState::Disconnected => (),
+            PlayerState::Connected(player_connected_state) => player_connected_state.ready = ready,
         }
     }
 }
@@ -85,6 +117,16 @@ impl RoomSharedState {
         unique_player_name
     }
 
+    pub fn mark_player_disconnected(&mut self, player_name: &str) -> Result<(), String> {
+        let player = self
+            .players
+            .get_mut(player_name)
+            .ok_or_else(|| format!("{player_name} isn't in room {}", self.room_number))?;
+
+        player.player_state = PlayerState::Disconnected;
+        Ok(())
+    }
+
     /// Moves the room from the lobby to the first round, set up by `new_round()`. Only the host
     /// can do this.
     pub fn start_game(
@@ -130,25 +172,34 @@ impl RoomSharedState {
             .players
             .get_mut(player_name)
             .ok_or_else(|| format!("{player_name} isn't in room {}", self.room_number))?;
-        if player.ready {
-            return Err(format!("{player_name} already submitted this round"));
-        }
-        *player
-            .correct_guesses_per_round
-            .get_mut(correct)
-            .ok_or_else(|| format!("{player_name} submitted too many guesses"))? += 1;
-        player.ready = true;
+        match &mut player.player_state {
+            PlayerState::Disconnected => Err(format!("{player_name} is disconnected")),
+            PlayerState::Connected(connected) => {
+                if connected.ready {
+                    return Err(format!("{player_name} already submitted this round"));
+                }
+                *player
+                    .correct_guesses_per_round
+                    .get_mut(correct)
+                    .ok_or_else(|| format!("{player_name} submitted too many guesses"))? += 1;
+                connected.ready = true;
 
-        if self.players.values().all(|player| player.ready) {
-            for player in self.players.values_mut() {
-                player.ready = false;
+                if self
+                    .players
+                    .values()
+                    .all(|player| player.ready() || player.disconnected())
+                {
+                    for player in self.players.values_mut() {
+                        player.set_ready_if_connected(false);
+                    }
+                    self.stage = RoomStage::Round {
+                        number: round + 1,
+                        setup: new_round(),
+                    };
+                }
+                Ok(())
             }
-            self.stage = RoomStage::Round {
-                number: round + 1,
-                setup: new_round(),
-            };
         }
-        Ok(())
     }
 }
 
@@ -230,7 +281,7 @@ mod tests {
         room.submit_guesses("alice", &[0, 1, 2], no_new_round)
             .unwrap();
         assert_eq!(room.stage.round_number(), Some(1));
-        assert!(room.players["alice"].ready);
+        assert!(room.players["alice"].ready());
         assert!(
             room.submit_guesses("alice", &[0, 1, 2], no_new_round)
                 .is_err(),
@@ -240,7 +291,7 @@ mod tests {
         room.submit_guesses("bob", &[0, 1, 2], RoundSetup::default)
             .unwrap();
         assert_eq!(room.stage.round_number(), Some(2));
-        assert!(room.players.values().all(|player| !player.ready));
+        assert!(room.players.values().all(|player| !player.ready()));
     }
 
     #[test]
